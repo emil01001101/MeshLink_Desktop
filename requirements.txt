@@ -1,0 +1,18 @@
+# MeshLink Desktop - Python dependencies
+# Tested on Python 3.10+
+# ============================================================
+
+# MANDATORY
+PySide6>=6.6.0
+meshtastic>=2.3.0
+pypubsub>=4.0.3
+pyserial>=3.5
+
+# RECOMMENDED
+PyYAML>=6.0
+PySide6-WebEngine>=6.6.0     # for Map tab (Leaflet/OSM)
+pyqtgraph>=0.13.0            # for telemetry chart in Info tab + popup
+numpy>=1.24.0                # required by pyqtgraph
+
+# OPTIONAL (Bluetooth)
+bleak>=0.21.0

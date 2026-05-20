@@ -1,0 +1,50 @@
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+sdist/
+wheels/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.spyderproject
+.spyproject
+
+# OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Runtime data (do NOT commit user logs or local DBs)
+meshtastic_desktop_logs/
+*.db
+*.db-journal
+*.log
+
+# PySide6 / Qt
+*.qm
+*.qrc.in
+
+# Local dev artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/

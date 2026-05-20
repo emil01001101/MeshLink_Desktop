@@ -1,0 +1,52 @@
+MeshLink Desktop
+Copyright (C) 2026 Emil M.
+
+This product includes software developed with the following components:
+
+THIRD-PARTY LIBRARIES
+=====================
+
+meshtastic-python — Meshtastic Developers <contact@meshtastic.org>
+  https://github.com/meshtastic/python
+  License: GPL-3.0-only
+
+PySide6 — The Qt Company
+  https://wiki.qt.io/Qt_for_Python
+  License: LGPL-3.0 (also available under GPL and commercial terms)
+
+pyqtgraph — Luke Campagnola and contributors
+  https://www.pyqtgraph.org/
+  License: MIT
+
+pypubsub — Oliver Schoenborn
+  https://github.com/schollii/pypubsub
+  License: BSD-2-Clause
+
+pyserial — Chris Liechti
+  https://github.com/pyserial/pyserial
+  License: BSD-3-Clause
+
+PyYAML — Kirill Simonov and contributors
+  https://pyyaml.org/
+  License: MIT
+
+numpy — NumPy Developers
+  https://numpy.org/
+  License: BSD-3-Clause
+
+bleak — Henrik Blidh
+  https://github.com/hbldh/bleak
+  License: MIT
+
+
+AI-ASSISTED DEVELOPMENT
+=======================
+
+Significant portions of this codebase were written with the assistance of
+Claude AI (Anthropic) — architecture review, refactoring, bug-fixing,
+documentation and code review. Per the Anthropic terms of service, output
+generated through Claude is owned by the prompting user. AI-generated
+content is also not subject to copyright protection in most jurisdictions
+(US Copyright Office, 2023; EU IP Office), so legal copyright on this
+project rests solely with Emil M. The AI collaboration is acknowledged
+here for transparency.
