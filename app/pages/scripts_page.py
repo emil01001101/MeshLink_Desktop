@@ -702,14 +702,16 @@ class ScriptsPage(QWidget):
         sec = _unit_to_seconds(value, unit)
         # Channels CSV
         indices = self._read_channel_indices()
-        if not indices:
-            QMessageBox.warning(self, "No channel selected",
-                                "Please select at least one channel "
-                                "(or your script will have no place to send to).")
-            return
-        target_channels = ",".join(str(i) for i in indices)
-        # DM target
-        if self.rb_dm.isChecked():
+        is_dm = self.rb_dm.isChecked()
+
+        # Validation differs by target mode:
+        #  • Broadcast → at least one channel must be ticked (that's where
+        #    the public message goes).
+        #  • Direct message → the DM still travels on a channel (the channel
+        #    PSK encrypts it), but the user shouldn't have to think about
+        #    that. If they picked a DM target but no channel, default to
+        #    the PRIMARY channel (index 0) automatically.
+        if is_dm:
             target_dest = self._resolve_dm_target()
             if not target_dest:
                 QMessageBox.warning(self, "Missing DM target",
@@ -717,8 +719,20 @@ class ScriptsPage(QWidget):
                                     "pick a node. Either pick one or switch to "
                                     "Broadcast.")
                 return
+            if not indices:
+                # Auto-use the primary channel for the DM
+                indices = [0]
+                log.info("DM with no channel ticked — defaulting to PRIMARY (0)")
         else:
             target_dest = ""
+            if not indices:
+                QMessageBox.warning(self, "No channel selected",
+                                    "Please tick at least one channel for a "
+                                    "broadcast message — that's where it will "
+                                    "be sent.")
+                return
+
+        target_channels = ",".join(str(i) for i in indices)
         ScriptsDB.get().update(
             self._current_id,
             name=self.in_name.text().strip() or "(unnamed)",

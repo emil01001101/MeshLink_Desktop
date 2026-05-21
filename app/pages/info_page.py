@@ -518,9 +518,11 @@ class InfoPage(QWidget):
             ("info.field.firmware",   "firmwareVersion"),
             ("info.field.region",     "region"),
             ("info.field.preset",     "modemPreset"),
+            ("info.field.frequency",  "frequency"),
             ("info.field.hops",       "hopLimit"),
             ("info.field.reboots",    "rebootCount"),
-            ("info.field.min_app",    "minAppVersion"),
+            ("info.field.last_rx",    "lastRx"),
+            ("info.field.last_tx",    "lastTx"),
         ]
         for i, (key_t, key) in enumerate(self._hw_keys):
             row = i // 2
@@ -676,6 +678,17 @@ class InfoPage(QWidget):
         for key, (_, v_lbl, _) in self._hw_labels.items():
             v = info.get(key)
             v_lbl.setText(str(v) if v not in (None, "") else "—")
+        # Compute the exact operating frequency from region + preset + channel
+        try:
+            freq = self.manager.get_radio_frequency()
+            if freq and "frequency" in self._hw_labels:
+                _, v_lbl, _ = self._hw_labels["frequency"]
+                v_lbl.setText(
+                    f"{freq['frequency_mhz']} MHz  "
+                    f"(BW {freq['bandwidth_khz']:.0f} kHz, "
+                    f"ch #{freq['channel_num']})")
+        except Exception:
+            log.debug("Could not compute frequency", exc_info=True)
         self._try_pull_local_metrics()
         QTimer.singleShot(500, self._refresh_chart)
 
@@ -870,6 +883,20 @@ class InfoPage(QWidget):
         except Exception:
             log.exception("mesh_health refresh failed")
 
+        # V20-turn13: live "last RX / last TX" in the About Device card
+        try:
+            rt = self.manager.get_last_rx_tx()
+            if "lastRx" in self._hw_labels:
+                _, rx_lbl, _ = self._hw_labels["lastRx"]
+                age = rt.get("last_rx_age")
+                rx_lbl.setText(self._humanize_age_short(age) if age is not None else "—")
+            if "lastTx" in self._hw_labels:
+                _, tx_lbl, _ = self._hw_labels["lastTx"]
+                age = rt.get("last_tx_age")
+                tx_lbl.setText(self._humanize_age_short(age) if age is not None else "—")
+        except Exception:
+            log.debug("last rx/tx refresh failed", exc_info=True)
+
         dm = self._my_metrics
         bat = dm.get("batteryLevel")
         if bat is not None:
@@ -975,6 +1002,16 @@ class InfoPage(QWidget):
         if delta < 3600:  return f"{delta // 60}m"
         if delta < 86400: return f"{delta // 3600}h"
         return f"{delta // 86400}d"
+
+    @staticmethod
+    def _humanize_age_short(delta: int) -> str:
+        """Like _humanize_age but takes an already-computed age in seconds."""
+        if delta is None: return "—"
+        if delta < 5:     return "just now"
+        if delta < 60:    return f"{delta}s ago"
+        if delta < 3600:  return f"{delta // 60}m ago"
+        if delta < 86400: return f"{delta // 3600}h ago"
+        return f"{delta // 86400}d ago"
 
     @staticmethod
     def _battery_label(pct: int) -> str:

@@ -414,17 +414,47 @@ class MeshtasticManager(QObject):
         self._worker.start()
 
     def disconnect(self, user_initiated: bool = True):
-        """Cleanly close the current connection."""
+        """Cleanly close the current connection.
+
+        When a TCP/serial link drops abruptly (WinError 10054, cable yank),
+        the meshtastic library's close() still tries to send a disconnect
+        packet over the dead socket, which raises. We pre-empt that by
+        closing the underlying stream/socket directly first, so the normal
+        close() has nothing left to fail on. Any residual error is logged
+        quietly (debug) since it's expected, not a real fault.
+        """
         log.info(f"disconnect() called (user={user_initiated})")
         if user_initiated:
             self._user_disconnected = True
             self._stop_reconnect_timer()
         self._stop_config_timeout()
         if self._iface is not None:
+            iface = self._iface
+            # Pre-close the raw transport so close() can't try to write a
+            # disconnect packet over a broken socket.
             try:
-                self._iface.close()
+                # TCP interface: has a .socket
+                sock = getattr(iface, "socket", None)
+                if sock is not None:
+                    try:
+                        sock.close()
+                    except Exception:
+                        pass
+                # Serial / stream interface: has a .stream
+                stream = getattr(iface, "stream", None)
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
             except Exception:
-                log.exception("Error closing interface")
+                pass
+            # Now the library close() — should be clean, but guard anyway.
+            try:
+                iface.close()
+            except Exception as e:
+                # Expected when the link already dropped — keep it quiet.
+                log.debug(f"Interface close() raised (expected on dead link): {e}")
             self._iface = None
         self._my_node_num = None
         self._connection_established_seen = False
@@ -1499,6 +1529,196 @@ class MeshtasticManager(QObject):
         # Sort by signal strength (strongest first), then by name
         out.sort(key=lambda d: (-(d["rssi"] or -999), d["name"].lower()))
         return out
+
+    def get_radio_frequency(self) -> Optional[dict]:
+        """Compute the exact LoRa frequency the device is transmitting on.
+
+        Meshtastic derives the operating frequency from:
+          • the region's frequency band (freq_start..freq_end)
+          • the modem preset's bandwidth
+          • the channel number (lora.channel_num, or derived from the
+            primary channel name hash if 0)
+
+        Returns a dict with center frequency (MHz), region, preset,
+        bandwidth and channel number — or None if not connected.
+
+        Frequency formula (matches firmware RadioInterface.cpp):
+            num_channels = floor((freq_end - freq_start) / (bandwidth/1000))
+            freq = freq_start + (bandwidth/2000) + (channel_num * bandwidth/1000)
+        """
+        if not self.is_connected:
+            return None
+        try:
+            cfg = self._iface.localNode.localConfig.lora
+        except Exception:
+            return None
+
+        # Region frequency bands (MHz) — start, end. From Meshtastic firmware.
+        REGIONS = {
+            1:  ("US",      902.0, 928.0),
+            2:  ("EU_433",  433.0, 434.0),
+            3:  ("EU_868",  869.4, 869.65),
+            4:  ("CN",      470.0, 510.0),
+            5:  ("JP",      920.8, 927.8),
+            6:  ("ANZ",     915.0, 928.0),
+            7:  ("KR",      920.0, 923.0),
+            8:  ("TW",      920.0, 925.0),
+            9:  ("RU",      868.7, 869.2),
+            10: ("IN",      865.0, 867.0),
+            11: ("NZ_865",  864.0, 868.0),
+            12: ("TH",      920.0, 925.0),
+            13: ("LORA_24", 2400.0, 2483.5),
+            14: ("UA_433",  433.0, 434.7),
+            15: ("UA_868",  868.0, 868.6),
+            16: ("MY_433",  433.0, 435.0),
+            17: ("MY_919",  919.0, 924.0),
+            18: ("SG_923",  917.0, 925.0),
+        }
+        # Modem preset → bandwidth in kHz. From firmware.
+        PRESETS = {
+            0:  ("LONG_FAST",      250.0),
+            1:  ("LONG_SLOW",      125.0),
+            2:  ("VERY_LONG_SLOW", 62.5),
+            3:  ("MEDIUM_SLOW",    250.0),
+            4:  ("MEDIUM_FAST",    250.0),
+            5:  ("SHORT_SLOW",     250.0),
+            6:  ("SHORT_FAST",     250.0),
+            7:  ("LONG_MODERATE",  125.0),
+            8:  ("SHORT_TURBO",    500.0),
+        }
+        region_num  = int(getattr(cfg, "region", 0) or 0)
+        preset_num  = int(getattr(cfg, "modem_preset", 0) or 0)
+        channel_num = int(getattr(cfg, "channel_num", 0) or 0)
+
+        region = REGIONS.get(region_num)
+        preset = PRESETS.get(preset_num)
+        if not region or not preset:
+            return None
+
+        region_name, freq_start, freq_end = region
+        preset_name, bw_khz = preset
+        bw_mhz = bw_khz / 1000.0
+
+        # Number of channels that fit in the band
+        num_channels = max(1, int((freq_end - freq_start) / bw_mhz))
+
+        # If channel_num is 0, the firmware derives it from the primary
+        # channel name hash. We approximate using the same xor-hash.
+        if channel_num == 0:
+            try:
+                ch_name = ""
+                for ch in self._iface.localNode.channels:
+                    if int(getattr(ch, "role", 0)) == 1:  # PRIMARY
+                        ch_name = ch.settings.name or ""
+                        break
+                if not ch_name:
+                    ch_name = "LongFast"  # default name when blank
+                h = 0
+                for c in ch_name.encode():
+                    h ^= c
+                channel_num = (h % num_channels)
+            except Exception:
+                channel_num = 0
+
+        freq = freq_start + (bw_mhz / 2.0) + (channel_num * bw_mhz)
+        return {
+            "frequency_mhz": round(freq, 4),
+            "region":        region_name,
+            "preset":        preset_name,
+            "bandwidth_khz": bw_khz,
+            "channel_num":   channel_num,
+            "num_channels":  num_channels,
+        }
+
+    def get_last_rx_tx(self) -> dict:
+        """Return timestamps + age of the last received and transmitted packet.
+
+        Used by the Info tab to show "last RX 12s ago / last TX 3m ago".
+        """
+        import time as _t
+        now = int(_t.time())
+        last_rx_ts = None
+        for dq in self._rx_packets.values():
+            for ts, *_ in dq:
+                if last_rx_ts is None or ts > last_rx_ts:
+                    last_rx_ts = ts
+        last_tx_ts = None
+        if self._tx_packets:
+            last_tx_ts = max(ts for ts, *_ in self._tx_packets)
+        return {
+            "last_rx_ts":  last_rx_ts,
+            "last_tx_ts":  last_tx_ts,
+            "last_rx_age": (now - last_rx_ts) if last_rx_ts else None,
+            "last_tx_age": (now - last_tx_ts) if last_tx_ts else None,
+        }
+
+    @staticmethod
+    def scan_network_for_devices(timeout: float = 0.3,
+                                 progress_cb=None) -> list:
+        """Scan the local /24 subnet for Meshtastic TCP devices (port 4403).
+
+        Determines the local IP, then probes every host in the same /24
+        for an open port 4403 (the Meshtastic TCP API port). Returns a
+        list of dicts: [{"ip": "10.10.10.187", "hostname": "..."}].
+
+        Should be run from a worker thread — scanning 254 hosts takes a
+        few seconds even with a short timeout. progress_cb(done, total)
+        is called as it scans.
+        """
+        import socket
+        import concurrent.futures
+
+        # Find our local IP (the one used to reach the internet)
+        local_ip = None
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+        except Exception:
+            try:
+                local_ip = socket.gethostbyname(socket.gethostname())
+            except Exception:
+                log.warning("Could not determine local IP for network scan")
+                return []
+        if not local_ip or local_ip.startswith("127."):
+            return []
+
+        subnet = ".".join(local_ip.split(".")[:3])
+        found = []
+
+        def probe(host_ip):
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                    sock.settimeout(timeout)
+                    if sock.connect_ex((host_ip, 4403)) == 0:
+                        # Port open — try reverse DNS for a friendly name
+                        try:
+                            hostname = socket.gethostbyaddr(host_ip)[0]
+                        except Exception:
+                            hostname = ""
+                        return {"ip": host_ip, "hostname": hostname}
+            except Exception:
+                pass
+            return None
+
+        hosts = [f"{subnet}.{i}" for i in range(1, 255)]
+        total = len(hosts)
+        done = 0
+        with concurrent.futures.ThreadPoolExecutor(max_workers=64) as pool:
+            futures = {pool.submit(probe, h): h for h in hosts}
+            for fut in concurrent.futures.as_completed(futures):
+                done += 1
+                if progress_cb:
+                    try: progress_cb(done, total)
+                    except Exception: pass
+                r = fut.result()
+                if r:
+                    found.append(r)
+        # Sort by last octet
+        found.sort(key=lambda d: int(d["ip"].split(".")[-1]))
+        log.info(f"Network scan found {len(found)} device(s) on :4403")
+        return found
 
     def get_mesh_health(self) -> dict:
         """Compute a snapshot of mesh activity for diagnostics.

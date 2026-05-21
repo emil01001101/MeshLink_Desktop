@@ -2006,14 +2006,20 @@ class ConsolePage(QWidget):
                 return
             cfg = getattr(ln.localConfig, section, None)
             if cfg is None:
+                # Maybe it's a module config section
+                cfg = getattr(ln.moduleConfig, section, None)
+            if cfg is None:
                 self._println(f"Error: unknown config section '{section}'",
                               color=Colors.DANGER)
+                self._suggest_field_location(field)
                 return
             # coerce value to the right type by inspecting current field
             current = getattr(cfg, field, None)
             if current is None and not hasattr(cfg, field):
                 self._println(f"Error: unknown field '{field}' in section '{section}'",
                               color=Colors.DANGER)
+                # Search every section for this field and suggest the fix
+                self._suggest_field_location(field)
                 return
             # Find field descriptor (for enum name resolution)
             field_desc = None
@@ -2032,30 +2038,88 @@ class ConsolePage(QWidget):
             self._println(f"  ✗ Error: {e}", color=Colors.DANGER)
             log.exception("set command failed")
 
+    def _suggest_field_location(self, field: str):
+        """When a `set`/`get` field isn't found, search every config and
+        module section for it (exact + fuzzy) and suggest the correct
+        command. This fixes the common confusion where users guess the
+        wrong section, e.g. `set device.position_broadcast_secs` when the
+        field actually lives in `position`.
+        """
+        try:
+            ln = self.manager.interface.localNode
+        except Exception:
+            return
+        field_l = field.lower()
+        exact = []
+        fuzzy = []
+        for kind, root in (("config", ln.localConfig),
+                           ("module", ln.moduleConfig)):
+            for sect_desc in root.DESCRIPTOR.fields:
+                sect_name = sect_desc.name
+                sub = getattr(root, sect_name, None)
+                if sub is None or not hasattr(sub, "DESCRIPTOR"):
+                    continue
+                for fd in sub.DESCRIPTOR.fields:
+                    if fd.name == field:
+                        exact.append((sect_name, fd.name))
+                    elif field_l in fd.name.lower() or fd.name.lower() in field_l:
+                        fuzzy.append((sect_name, fd.name))
+        if exact:
+            self._println("  Did you mean:", color=Colors.TEXT_SECONDARY)
+            for sect, fn in exact:
+                self._println(f"    set {sect}.{fn} <value>", color=Colors.PRIMARY)
+        elif fuzzy:
+            self._println("  Similar fields:", color=Colors.TEXT_SECONDARY)
+            for sect, fn in fuzzy[:6]:
+                self._println(f"    set {sect}.{fn} <value>", color=Colors.PRIMARY)
+        else:
+            self._println("  Tip: run 'get <section>' to list available fields, "
+                          "e.g. 'get position'", color=Colors.TEXT_DIM)
+
     def _cmd_get(self, args):
-        """Generic getter: get <config.field>."""
+        """Generic getter: get <section.field>  OR  get <section> to list all."""
         if not args:
-            self._println("Usage: get <key.path>", color=Colors.WARNING)
-            self._println("  Example: get lora.region", color=Colors.TEXT_DIM)
+            self._println("Usage: get <section.field>  or  get <section>",
+                          color=Colors.WARNING)
+            self._println("  Examples:  get lora.region   ·   get position",
+                          color=Colors.TEXT_DIM)
             return
         key = args[0]
         try:
+            ln = self.manager.interface.localNode
             section, _, field = key.partition(".")
-            if not field:
-                self._println("Error: key must be 'section.field'",
-                              color=Colors.DANGER)
-                return
-            cfg = getattr(self.manager.interface.localNode.localConfig, section, None)
+
+            # Resolve section in either config or module config
+            cfg = getattr(ln.localConfig, section, None)
+            if cfg is None:
+                cfg = getattr(ln.moduleConfig, section, None)
             if cfg is None:
                 self._println(f"Error: unknown section '{section}'",
                               color=Colors.DANGER)
+                self._println("  Config sections: device, position, power, "
+                              "network, display, lora, bluetooth",
+                              color=Colors.TEXT_DIM)
+                self._println("  Module sections: mqtt, serial, telemetry, "
+                              "neighbor_info, detection_sensor, ...",
+                              color=Colors.TEXT_DIM)
                 return
+
+            # No field → list all fields in this section
+            if not field:
+                self._println(f"── {section} ──", color=Colors.PRIMARY, bold=True)
+                for fd in cfg.DESCRIPTOR.fields:
+                    val = getattr(cfg, fd.name, None)
+                    name = getattr(val, "name", None)
+                    self._println(f"  {fd.name} = {name if name else val}",
+                                  color=Colors.TEXT_SECONDARY)
+                return
+
             val = getattr(cfg, field, None)
             if val is None and not hasattr(cfg, field):
-                self._println(f"Error: unknown field '{field}'",
+                self._println(f"Error: unknown field '{field}' in '{section}'",
                               color=Colors.DANGER)
+                self._suggest_field_location(field)
                 return
-            # try to get .name for enums
             name = getattr(val, "name", None)
             self._println(f"  {key} = {name if name else val}",
                           color=Colors.SUCCESS)

@@ -147,6 +147,13 @@ class ConnectionBar(QFrame):
         self.wifi_port.setValue(4403)
         self.wifi_port.setFixedWidth(80)
         wl.addWidget(self.wifi_port)
+        # V20-turn13: scan the local network for Meshtastic TCP devices
+        self.btn_wifi_scan = QPushButton("🔍")
+        self.btn_wifi_scan.setMaximumWidth(34)
+        self.btn_wifi_scan.setToolTip(
+            "Scan the local network for Meshtastic devices (port 4403)")
+        self.btn_wifi_scan.clicked.connect(self._open_network_scanner)
+        wl.addWidget(self.btn_wifi_scan)
         self.stack.addWidget(wifi_w)
 
         root.addWidget(self.stack, 1)
@@ -663,4 +670,123 @@ class _SerialPickerDialog(QDialog):
         if item is None:
             return
         self.selected_device = item.data(Qt.UserRole) or ""
+        self.accept()
+
+
+# ===========================================================================
+# V20-turn13: Network scanner — find Meshtastic TCP devices on the LAN
+# ===========================================================================
+def _open_network_scanner_for_bar(bar: ConnectionBar):
+    dlg = _NetworkScanDialog(bar)
+    if dlg.exec() == _NetworkScanDialog.Accepted and dlg.selected_ip:
+        bar.wifi_host.setText(dlg.selected_ip)
+
+
+ConnectionBar._open_network_scanner = _open_network_scanner_for_bar
+
+
+class _NetworkScanWorker(QThread):
+    """Scans the /24 subnet for open :4403 in a background thread."""
+    progress = Signal(int, int)
+    finished_with_results = Signal(list)
+
+    def run(self):
+        from ..connection import MeshtasticManager
+        results = MeshtasticManager.scan_network_for_devices(
+            timeout=0.3, progress_cb=lambda d, t: self.progress.emit(d, t))
+        self.finished_with_results.emit(results)
+
+
+class _NetworkScanDialog(QDialog):
+    """Modal dialog: scans the LAN and lists Meshtastic devices on :4403."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Scan network — Meshtastic devices")
+        self.setMinimumSize(480, 360)
+        self.selected_ip = ""
+        self._worker = None
+
+        root = QVBoxLayout(self)
+        root.setSpacing(10)
+        info = QLabel(
+            "Scanning your local network for devices with the Meshtastic "
+            "TCP API open (port 4403). This probes every address on your "
+            "subnet and takes a few seconds.")
+        info.setWordWrap(True)
+        root.addWidget(info)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 254)
+        root.addWidget(self.progress)
+
+        self.list_widget = QListWidget()
+        self.list_widget.itemDoubleClicked.connect(
+            lambda _: self.accept_with_selection())
+        root.addWidget(self.list_widget, 1)
+
+        self.status = QLabel("")
+        self.status.setStyleSheet(f"color: {Colors.TEXT_DIM}; font-size: 11px;")
+        root.addWidget(self.status)
+
+        btn_row = QHBoxLayout()
+        self.btn_rescan = QPushButton("🔄  Rescan")
+        self.btn_rescan.clicked.connect(self.scan_now)
+        btn_row.addWidget(self.btn_rescan)
+        btn_row.addStretch(1)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept_with_selection)
+        bb.rejected.connect(self.reject)
+        self.btn_ok = bb.button(QDialogButtonBox.Ok)
+        self.btn_ok.setEnabled(False)
+        btn_row.addWidget(bb)
+        root.addLayout(btn_row)
+
+        self.list_widget.currentItemChanged.connect(
+            lambda cur, _p: self.btn_ok.setEnabled(cur is not None))
+
+        self.scan_now()
+
+    def scan_now(self):
+        self.list_widget.clear()
+        self.btn_ok.setEnabled(False)
+        self.btn_rescan.setEnabled(False)
+        self.progress.setValue(0)
+        self.status.setText("Scanning… this can take a few seconds.")
+        self._worker = _NetworkScanWorker(self)
+        self._worker.progress.connect(self._on_progress)
+        self._worker.finished_with_results.connect(self._on_results)
+        self._worker.start()
+
+    def _on_progress(self, done, total):
+        self.progress.setMaximum(total)
+        self.progress.setValue(done)
+
+    def _on_results(self, results):
+        self.btn_rescan.setEnabled(True)
+        self.progress.setValue(self.progress.maximum())
+        if not results:
+            self.status.setText(
+                "No Meshtastic devices found on the network. Make sure the "
+                "device is powered on, connected to the same Wi-Fi/LAN, and "
+                "has Wi-Fi enabled in its config.")
+            return
+        for r in results:
+            ip = r["ip"]
+            host = r.get("hostname") or ""
+            label = f"📡  {ip}"
+            if host:
+                label += f"\n     {host}"
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, ip)
+            self.list_widget.addItem(item)
+        self.status.setText(
+            f"Found {len(results)} device(s) listening on port 4403.")
+        self.list_widget.setCurrentRow(0)
+
+    def accept_with_selection(self):
+        item = self.list_widget.currentItem()
+        if item is None:
+            return
+        self.selected_ip = item.data(Qt.UserRole) or ""
         self.accept()
