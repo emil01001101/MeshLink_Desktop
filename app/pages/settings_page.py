@@ -5,6 +5,8 @@ istoric) + actiuni device (owner, reboot, reset NodeDB). Cu i18n.
 
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
@@ -15,6 +17,8 @@ from ..connection import MeshtasticManager
 from ..settings_store import Settings
 from ..theme import Colors
 from ..i18n import t, i18n, LANGUAGE_NAMES
+
+log = logging.getLogger("meshlink.settings")
 
 
 class SettingsPage(QWidget):
@@ -31,7 +35,21 @@ class SettingsPage(QWidget):
         self._retranslate()
 
     def _build_ui(self):
-        root = QVBoxLayout(self)
+        # Wrap everything in a scroll area — the page now has a lot of
+        # content (preferences + owner + quick device config + actions).
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        from PySide6.QtWidgets import QScrollArea
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet(
+            f"QScrollArea {{ background: {Colors.BG_BASE}; border: none; }}")
+        host = QWidget()
+        scroll.setWidget(host)
+        outer.addWidget(scroll)
+
+        root = QVBoxLayout(host)
         root.setContentsMargins(20, 16, 20, 20)
         root.setSpacing(16)
 
@@ -117,6 +135,9 @@ class SettingsPage(QWidget):
         ol.addLayout(obtns)
         root.addWidget(owner)
 
+        # ============== Quick Device Config ==============
+        self._build_quick_config(root)
+
         # ============== Actions ==============
         actions = QFrame()
         actions.setObjectName("Card")
@@ -165,6 +186,373 @@ class SettingsPage(QWidget):
         abl.addWidget(self.lbl_log_hint)
         root.addWidget(about)
         root.addStretch(1)
+
+    def _build_quick_config(self, root):
+        """A compact panel to configure the most common device settings
+        without using the Console. Each control writes to the device when
+        the user clicks the per-row Apply button (or the global Save).
+
+        Grouped: Identity, Radio, Position, Broadcast intervals, Display,
+        Power saving.
+        """
+        from PySide6.QtWidgets import QSpinBox, QDoubleSpinBox
+
+        card = QFrame()
+        card.setObjectName("Card")
+        v = QVBoxLayout(card)
+        v.setContentsMargins(18, 16, 18, 16)
+        v.setSpacing(10)
+
+        self.lbl_section_quick = QLabel("⚡  Quick device configuration")
+        self.lbl_section_quick.setProperty("role", "section")
+        v.addWidget(self.lbl_section_quick)
+
+        self.lbl_quick_hint = QLabel(
+            "Configure common device settings directly. Each change is "
+            "written to the radio and may trigger a brief reboot "
+            "(auto-reconnect handles it). Requires an active connection.")
+        self.lbl_quick_hint.setWordWrap(True)
+        self.lbl_quick_hint.setStyleSheet(
+            f"color: {Colors.TEXT_SECONDARY}; font-size: 11px;")
+        v.addWidget(self.lbl_quick_hint)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(8)
+        grid.setColumnStretch(1, 1)
+        self._qc_widgets = {}   # field_key -> (widget, getter)
+        r = 0
+
+        def add_label_row(text):
+            nonlocal r
+            lbl = QLabel(text)
+            lbl.setStyleSheet(
+                f"color: {Colors.PRIMARY}; font-size: 11px; "
+                f"font-weight: 700; padding-top: 6px;")
+            grid.addWidget(lbl, r, 0, 1, 3)
+            r += 1
+
+        def add_field(label, widget, key, getter, hint=""):
+            nonlocal r
+            cap = QLabel(label)
+            grid.addWidget(cap, r, 0)
+            grid.addWidget(widget, r, 1)
+            if hint:
+                widget.setToolTip(hint)
+            self._qc_widgets[key] = (widget, getter)
+            r += 1
+
+        # ----- Identity -----
+        add_label_row("IDENTITY")
+        self.qc_long = QLineEdit(); self.qc_long.setMaxLength(40)
+        self.qc_long.setPlaceholderText("e.g. My Base Station")
+        add_field("Long name", self.qc_long, "owner_long",
+                  lambda: self.qc_long.text().strip())
+        self.qc_short = QLineEdit(); self.qc_short.setMaxLength(4)
+        self.qc_short.setPlaceholderText("e.g. BASE (max 4)")
+        add_field("Short name", self.qc_short, "owner_short",
+                  lambda: self.qc_short.text().strip())
+
+        # ----- Radio -----
+        add_label_row("RADIO (LoRa)")
+        self.qc_region = QComboBox()
+        REGIONS = ["UNSET","US","EU_433","EU_868","CN","JP","ANZ","KR","TW",
+                   "RU","IN","NZ_865","TH","LORA_24","UA_433","UA_868",
+                   "MY_433","MY_919","SG_923"]
+        self.qc_region.addItems(REGIONS)
+        add_field("Region", self.qc_region, "region",
+                  lambda: self.qc_region.currentText(),
+                  "Your country's LoRa band — MUST match your local mesh.")
+        self.qc_preset = QComboBox()
+        PRESETS = ["LONG_FAST","LONG_SLOW","VERY_LONG_SLOW","MEDIUM_SLOW",
+                   "MEDIUM_FAST","SHORT_SLOW","SHORT_FAST","LONG_MODERATE",
+                   "SHORT_TURBO"]
+        self.qc_preset.addItems(PRESETS)
+        add_field("Modem preset", self.qc_preset, "preset",
+                  lambda: self.qc_preset.currentText(),
+                  "Trade-off between range and speed. LONG_FAST is the default.")
+        self.qc_hop = QSpinBox(); self.qc_hop.setRange(1, 7); self.qc_hop.setValue(3)
+        add_field("Hop limit", self.qc_hop, "hop_limit",
+                  lambda: self.qc_hop.value(),
+                  "Max relays a packet can take (1–7). 3 is typical.")
+        self.qc_txpow = QSpinBox(); self.qc_txpow.setRange(0, 30); self.qc_txpow.setValue(0)
+        add_field("TX power (dBm, 0=max legal)", self.qc_txpow, "tx_power",
+                  lambda: self.qc_txpow.value(),
+                  "0 lets the firmware pick the max legal power for your region.")
+
+        # ----- Position -----
+        add_label_row("POSITION (fixed)")
+        from PySide6.QtWidgets import QDoubleSpinBox
+        self.qc_lat = QDoubleSpinBox(); self.qc_lat.setRange(-90, 90)
+        self.qc_lat.setDecimals(6); self.qc_lat.setSingleStep(0.0001)
+        add_field("Latitude", self.qc_lat, "lat", lambda: self.qc_lat.value())
+        self.qc_lon = QDoubleSpinBox(); self.qc_lon.setRange(-180, 180)
+        self.qc_lon.setDecimals(6); self.qc_lon.setSingleStep(0.0001)
+        add_field("Longitude", self.qc_lon, "lon", lambda: self.qc_lon.value())
+        self.qc_alt = QSpinBox(); self.qc_alt.setRange(-500, 9000)
+        add_field("Altitude (m)", self.qc_alt, "alt", lambda: self.qc_alt.value())
+
+        # ----- Broadcast intervals -----
+        add_label_row("BROADCAST INTERVALS")
+        self.qc_nodeinfo = QComboBox()
+        self.qc_nodeinfo.setEditable(True)
+        for v_ in ["900","1800","3600","10800","21600"]:
+            self.qc_nodeinfo.addItem(v_)
+        add_field("Node-info broadcast (s)", self.qc_nodeinfo, "nodeinfo_secs",
+                  lambda: int(self.qc_nodeinfo.currentText() or 900),
+                  "How often the device announces itself. 900s = 15min.")
+        self.qc_posbcast = QComboBox()
+        self.qc_posbcast.setEditable(True)
+        for v_ in ["900","1800","3600","10800","43200"]:
+            self.qc_posbcast.addItem(v_)
+        add_field("Position broadcast (s)", self.qc_posbcast, "pos_secs",
+                  lambda: int(self.qc_posbcast.currentText() or 900),
+                  "How often the device shares its position. 3600s = 1h.")
+
+        # ----- Display -----
+        add_label_row("DISPLAY")
+        self.qc_screen = QComboBox()
+        self.qc_screen.setEditable(True)
+        for v_ in ["0 (always on)","10","30","60","120","300","600"]:
+            self.qc_screen.addItem(v_)
+        add_field("Screen timeout (s)", self.qc_screen, "screen_secs",
+                  lambda: self._parse_leading_int(self.qc_screen.currentText(), 60),
+                  "Seconds before the OLED turns off. 0 = always on.")
+        self.qc_carousel = QSpinBox(); self.qc_carousel.setRange(0, 600)
+        add_field("Auto screen carousel (s)", self.qc_carousel, "carousel_secs",
+                  lambda: self.qc_carousel.value(),
+                  "Auto-cycle screens every N seconds. 0 = disabled.")
+        self.qc_wake_tap = QCheckBox("Wake screen on tap / motion")
+        add_field("", self.qc_wake_tap, "wake_on_tap",
+                  lambda: self.qc_wake_tap.isChecked())
+        self.qc_12h = QCheckBox("Use 12-hour clock")
+        add_field("", self.qc_12h, "use_12h",
+                  lambda: self.qc_12h.isChecked())
+
+        # ----- Buttons / LED -----
+        add_label_row("BUTTONS & LED")
+        self.qc_led_off = QCheckBox("Disable LED heartbeat (blinking)")
+        add_field("", self.qc_led_off, "led_heartbeat_disabled",
+                  lambda: self.qc_led_off.isChecked(),
+                  "Stops the periodic status LED blink (saves a little power).")
+        self.qc_buzzer = QComboBox()
+        self.qc_buzzer.addItems(["DEFAULT","ALL_ENABLED","DISABLED",
+                                 "NOTIFICATIONS_ONLY","SYSTEM_ONLY"])
+        add_field("Buzzer mode", self.qc_buzzer, "buzzer_mode",
+                  lambda: self.qc_buzzer.currentText())
+        self.qc_double_tap = QCheckBox("Double-tap acts as button press")
+        add_field("", self.qc_double_tap, "double_tap",
+                  lambda: self.qc_double_tap.isChecked())
+
+        # ----- Power saving -----
+        add_label_row("POWER SAVING")
+        self.qc_power_saving = QCheckBox("Enable power-saving mode")
+        add_field("", self.qc_power_saving, "is_power_saving",
+                  lambda: self.qc_power_saving.isChecked(),
+                  "Aggressively sleeps between activity. Best for battery nodes.")
+        self.qc_shutdown = QSpinBox(); self.qc_shutdown.setRange(0, 100000)
+        add_field("Shutdown on battery after (s)", self.qc_shutdown, "shutdown_secs",
+                  lambda: self.qc_shutdown.value(),
+                  "Power off N seconds after losing USB power. 0 = never.")
+        self.qc_wait_bt = QSpinBox(); self.qc_wait_bt.setRange(0, 3600)
+        add_field("Wait for Bluetooth (s)", self.qc_wait_bt, "wait_bt_secs",
+                  lambda: self.qc_wait_bt.value(),
+                  "How long to stay awake waiting for a BLE client.")
+        self.qc_min_wake = QSpinBox(); self.qc_min_wake.setRange(0, 3600)
+        add_field("Min wake time (s)", self.qc_min_wake, "min_wake_secs",
+                  lambda: self.qc_min_wake.value())
+
+        v.addLayout(grid)
+
+        # Save button
+        brow = QHBoxLayout()
+        brow.addStretch(1)
+        self.qc_apply_btn = QPushButton("💾  Apply to device")
+        self.qc_apply_btn.setObjectName("PrimaryButton")
+        self.qc_apply_btn.setEnabled(False)
+        self.qc_apply_btn.clicked.connect(self._apply_quick_config)
+        brow.addWidget(self.qc_apply_btn)
+        v.addLayout(brow)
+
+        self.qc_status = QLabel("")
+        self.qc_status.setWordWrap(True)
+        self.qc_status.setStyleSheet(f"color: {Colors.TEXT_DIM}; font-size: 11px;")
+        v.addWidget(self.qc_status)
+
+        root.addWidget(card)
+
+    @staticmethod
+    def _parse_leading_int(text: str, default: int) -> int:
+        try:
+            return int(str(text).strip().split()[0])
+        except Exception:
+            return default
+
+    def _load_quick_config_from_device(self):
+        """Populate the quick-config widgets from the device's current config."""
+        if not self.manager.is_connected:
+            return
+        try:
+            ln = self.manager.interface.localNode
+            lc = ln.localConfig
+            # Identity
+            nodes = getattr(self.manager.interface, "nodes", {}) or {}
+            me = nodes.get(self.manager.my_node_id, {})
+            user = me.get("user", {}) if isinstance(me, dict) else {}
+            self.qc_long.setText(user.get("longName", "") or "")
+            self.qc_short.setText(user.get("shortName", "") or "")
+            # Radio
+            from meshtastic.protobuf.config_pb2 import Config
+            try:
+                self.qc_region.setCurrentText(
+                    Config.LoRaConfig.RegionCode.Name(int(lc.lora.region)))
+            except Exception: pass
+            try:
+                self.qc_preset.setCurrentText(
+                    Config.LoRaConfig.ModemPreset.Name(int(lc.lora.modem_preset)))
+            except Exception: pass
+            self.qc_hop.setValue(int(getattr(lc.lora, "hop_limit", 3) or 3))
+            self.qc_txpow.setValue(int(getattr(lc.lora, "tx_power", 0) or 0))
+            # Position
+            pos = me.get("position", {}) if isinstance(me, dict) else {}
+            if pos.get("latitude") is not None:
+                self.qc_lat.setValue(float(pos["latitude"]))
+            if pos.get("longitude") is not None:
+                self.qc_lon.setValue(float(pos["longitude"]))
+            if pos.get("altitude") is not None:
+                self.qc_alt.setValue(int(pos["altitude"]))
+            # Intervals
+            self.qc_nodeinfo.setCurrentText(
+                str(getattr(lc.device, "node_info_broadcast_secs", 900) or 900))
+            self.qc_posbcast.setCurrentText(
+                str(getattr(lc.position, "position_broadcast_secs", 900) or 900))
+            # Display
+            self.qc_screen.setCurrentText(
+                str(getattr(lc.display, "screen_on_secs", 60) or 60))
+            self.qc_carousel.setValue(
+                int(getattr(lc.display, "auto_screen_carousel_secs", 0) or 0))
+            self.qc_wake_tap.setChecked(
+                bool(getattr(lc.display, "wake_on_tap_or_motion", False)))
+            self.qc_12h.setChecked(bool(getattr(lc.display, "use_12h_clock", False)))
+            # Buttons/LED
+            self.qc_led_off.setChecked(
+                bool(getattr(lc.device, "led_heartbeat_disabled", False)))
+            self.qc_double_tap.setChecked(
+                bool(getattr(lc.device, "double_tap_as_button_press", False)))
+            # Power
+            self.qc_power_saving.setChecked(
+                bool(getattr(lc.power, "is_power_saving", False)))
+            self.qc_shutdown.setValue(
+                int(getattr(lc.power, "on_battery_shutdown_after_secs", 0) or 0))
+            self.qc_wait_bt.setValue(
+                int(getattr(lc.power, "wait_bluetooth_secs", 0) or 0))
+            self.qc_min_wake.setValue(
+                int(getattr(lc.power, "min_wake_secs", 0) or 0))
+            self.qc_status.setText("Loaded current device configuration.")
+        except Exception as e:
+            log.debug(f"Could not load quick config: {e}", exc_info=True)
+
+    def _apply_quick_config(self):
+        """Write all quick-config values to the device."""
+        if not self.manager.is_connected:
+            QMessageBox.warning(self, "Not connected",
+                                "Connect to a device first.")
+            return
+        try:
+            ln = self.manager.interface.localNode
+            lc = ln.localConfig
+            from meshtastic.protobuf.config_pb2 import Config
+            applied = []
+
+            # Identity (via setOwner)
+            long_n = self.qc_long.text().strip()
+            short_n = self.qc_short.text().strip()
+            if long_n or short_n:
+                try:
+                    ln.setOwner(long_name=long_n or None,
+                                short_name=short_n or None)
+                    applied.append("owner")
+                except Exception as e:
+                    log.warning(f"setOwner failed: {e}")
+
+            # Radio
+            try:
+                lc.lora.region = Config.LoRaConfig.RegionCode.Value(
+                    self.qc_region.currentText())
+                lc.lora.modem_preset = Config.LoRaConfig.ModemPreset.Value(
+                    self.qc_preset.currentText())
+                lc.lora.hop_limit = self.qc_hop.value()
+                lc.lora.tx_power = self.qc_txpow.value()
+                ln.writeConfig("lora")
+                applied.append("lora")
+            except Exception as e:
+                log.warning(f"lora write failed: {e}")
+
+            # Position interval + device node-info
+            try:
+                lc.device.node_info_broadcast_secs = int(
+                    self.qc_nodeinfo.currentText() or 900)
+                lc.device.led_heartbeat_disabled = self.qc_led_off.isChecked()
+                lc.device.double_tap_as_button_press = self.qc_double_tap.isChecked()
+                try:
+                    lc.device.buzzer_mode = lc.device.BuzzerMode.Value(
+                        self.qc_buzzer.currentText())
+                except Exception: pass
+                ln.writeConfig("device")
+                applied.append("device")
+            except Exception as e:
+                log.warning(f"device write failed: {e}")
+
+            try:
+                lc.position.position_broadcast_secs = int(
+                    self.qc_posbcast.currentText() or 900)
+                ln.writeConfig("position")
+                applied.append("position")
+            except Exception as e:
+                log.warning(f"position write failed: {e}")
+
+            # Display
+            try:
+                lc.display.screen_on_secs = self._parse_leading_int(
+                    self.qc_screen.currentText(), 60)
+                lc.display.auto_screen_carousel_secs = self.qc_carousel.value()
+                lc.display.wake_on_tap_or_motion = self.qc_wake_tap.isChecked()
+                lc.display.use_12h_clock = self.qc_12h.isChecked()
+                ln.writeConfig("display")
+                applied.append("display")
+            except Exception as e:
+                log.warning(f"display write failed: {e}")
+
+            # Power
+            try:
+                lc.power.is_power_saving = self.qc_power_saving.isChecked()
+                lc.power.on_battery_shutdown_after_secs = self.qc_shutdown.value()
+                lc.power.wait_bluetooth_secs = self.qc_wait_bt.value()
+                lc.power.min_wake_secs = self.qc_min_wake.value()
+                ln.writeConfig("power")
+                applied.append("power")
+            except Exception as e:
+                log.warning(f"power write failed: {e}")
+
+            # Fixed position (set-position) — only if lat/lon non-zero
+            lat = self.qc_lat.value(); lon = self.qc_lon.value()
+            if abs(lat) > 0.0001 or abs(lon) > 0.0001:
+                try:
+                    ln.setFixedPosition(lat, lon, int(self.qc_alt.value()))
+                    applied.append("position(fixed)")
+                except Exception as e:
+                    log.warning(f"setFixedPosition failed: {e}")
+
+            self.qc_status.setText(
+                f"✓ Applied: {', '.join(applied)}. The device may reboot "
+                "briefly to apply changes — it will reconnect automatically.")
+            self.qc_status.setStyleSheet(
+                f"color: {Colors.SUCCESS}; font-size: 11px;")
+        except Exception as e:
+            log.exception("apply_quick_config failed")
+            self.qc_status.setText(f"✗ Error: {e}")
+            self.qc_status.setStyleSheet(
+                f"color: {Colors.DANGER}; font-size: 11px;")
 
     def _load_preferences(self):
         s = Settings.get()
@@ -216,6 +604,11 @@ class SettingsPage(QWidget):
         self.save_owner_btn.setEnabled(is_ready)
         self.reboot_btn.setEnabled(is_ready)
         self.reset_db_btn.setEnabled(is_ready)
+        self.qc_apply_btn.setEnabled(is_ready)
+        if is_ready:
+            # Populate the quick-config panel from the device, a moment after
+            # connect so localConfig has arrived.
+            QTimer.singleShot(1500, self._load_quick_config_from_device)
         if state == "idle":
             self.long_name_input.clear()
             self.short_name_input.clear()
