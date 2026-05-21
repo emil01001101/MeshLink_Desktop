@@ -322,9 +322,22 @@ class ScriptsPage(QWidget):
         self.dm_picker.setPlaceholderText("Pick a node or paste !hexid")
         target_row.addWidget(self.dm_picker)
         target_row.addStretch(1)
-        self.rb_broadcast.toggled.connect(
-            lambda c: self.dm_picker.setEnabled(not c))
+        # V20-turn14: make Broadcast vs DM a clean either/or. When DM is
+        # selected, the channel checkboxes are disabled (a DM only uses the
+        # primary channel as transport, it is NOT a public broadcast) so
+        # there's no confusion that the message also goes out on LongFast.
+        self.rb_broadcast.toggled.connect(self._on_target_mode_changed)
         sendto_row.addLayout(target_row)
+
+        # Hint shown under the target row when DM mode is active
+        self.lbl_dm_hint = QLabel(
+            "🔒  Private message — sent only to the selected node. "
+            "Channels above are ignored in DM mode.")
+        self.lbl_dm_hint.setStyleSheet(
+            f"color: {Colors.TEXT_DIM}; font-size: 11px; "
+            f"padding: 2px 0 0 84px;")
+        self.lbl_dm_hint.setVisible(False)
+        sendto_row.addWidget(self.lbl_dm_hint)
 
         rl.addLayout(sendto_row)
 
@@ -611,10 +624,10 @@ class ScriptsPage(QWidget):
         if dest and dest not in ("^all", "!ffffffff"):
             self.rb_dm.setChecked(True)
             self.dm_picker.setEditText(dest)
-            self.dm_picker.setEnabled(True)
         else:
             self.rb_broadcast.setChecked(True)
-            self.dm_picker.setEnabled(False)
+        # Apply the enable/disable + hint for the loaded mode
+        self._on_target_mode_changed(self.rb_broadcast.isChecked())
         # Show last output if any
         self.output.clear()
         last_out = s.get("last_output") or ""
@@ -671,6 +684,23 @@ class ScriptsPage(QWidget):
         ScriptsDB.get().delete(self._current_id)
         self._current_id = None
         self._reload_list()
+
+    def _on_target_mode_changed(self, broadcast_checked: bool):
+        """Toggle UI between Broadcast (public) and Direct message (private).
+
+        Broadcast → channel checkboxes active, DM picker disabled.
+        DM        → channel checkboxes disabled+greyed (DM only uses the
+                    primary channel as transport, not a public broadcast),
+                    DM picker active, hint shown.
+        """
+        is_dm = not broadcast_checked
+        self.dm_picker.setEnabled(is_dm)
+        # Grey out / disable the channel checkboxes in DM mode
+        try:
+            self.channels_box.setEnabled(not is_dm)
+        except Exception:
+            pass
+        self.lbl_dm_hint.setVisible(is_dm)
 
     def _resolve_dm_target(self) -> str:
         """Return the node id from the DM picker (combobox can be edited)."""

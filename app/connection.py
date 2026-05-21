@@ -357,13 +357,35 @@ class MeshtasticManager(QObject):
             return
         if not self._last_conn_type:
             return
-        # If state is idle or failed AND no reconnect timer is queued,
-        # something has stalled the chain. Force a fresh attempt.
+        # Case 1: state is idle/failed and nothing is scheduled — the
+        # reconnect chain stalled (e.g. timer killed by OS sleep).
         if self._state in ("idle", "failed") and self._reconnect_timer is None:
             log.warning(
                 f"Safety net: state={self._state} but no reconnect scheduled "
                 f"— forcing reconnect now")
             self._schedule_reconnect()
+            return
+        # Case 2 (V20-turn14): state says "ready" but the underlying reader
+        # thread has died. This happens when the meshtastic stream reader
+        # hits "Unexpected OSError, terminating reader" (WinError 10054
+        # after a config-write reboot, or a Wi-Fi drop) WITHOUT publishing
+        # the connection.lost pubsub event — so _handle_connection_lost
+        # never fires and we're stuck believing we're connected on a dead
+        # socket. Detect the dead reader thread and recover.
+        if self._state == "ready" and self._iface is not None:
+            rx_thread = getattr(self._iface, "_rxThread", None)
+            if rx_thread is not None:
+                try:
+                    alive = rx_thread.is_alive()
+                except Exception:
+                    alive = True  # can't tell — assume OK
+                if not alive:
+                    log.warning(
+                        "Safety net: state=ready but the reader thread is "
+                        "DEAD (socket likely closed by remote). Forcing a "
+                        "reconnect.")
+                    # Treat exactly like a lost connection
+                    self._handle_connection_lost()
 
     # ---------- proprietati publice ----------
     @property

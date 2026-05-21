@@ -2032,8 +2032,12 @@ class ConsolePage(QWidget):
             setattr(cfg, field, converted)
             ln.writeConfig(section)
             self._println(
-                f"  ✓ Set {key} = {value} (raw: {converted}). Device will apply config.",
+                f"  ✓ Set {key} = {value} (raw: {converted}).",
                 color=Colors.SUCCESS)
+            self._println(
+                "  Note: the device applies config by rebooting. The "
+                "connection may drop briefly — it will reconnect "
+                "automatically.", color=Colors.TEXT_DIM)
         except Exception as e:
             self._println(f"  ✗ Error: {e}", color=Colors.DANGER)
             log.exception("set command failed")

@@ -678,19 +678,32 @@ class InfoPage(QWidget):
         for key, (_, v_lbl, _) in self._hw_labels.items():
             v = info.get(key)
             v_lbl.setText(str(v) if v not in (None, "") else "—")
-        # Compute the exact operating frequency from region + preset + channel
-        try:
-            freq = self.manager.get_radio_frequency()
-            if freq and "frequency" in self._hw_labels:
-                _, v_lbl, _ = self._hw_labels["frequency"]
-                v_lbl.setText(
-                    f"{freq['frequency_mhz']} MHz  "
-                    f"(BW {freq['bandwidth_khz']:.0f} kHz, "
-                    f"ch #{freq['channel_num']})")
-        except Exception:
-            log.debug("Could not compute frequency", exc_info=True)
+        self._update_frequency_label()
         self._try_pull_local_metrics()
         QTimer.singleShot(500, self._refresh_chart)
+
+    def _update_frequency_label(self):
+        """Compute and show the exact operating frequency.
+
+        Called both on deviceInfoReady AND from the per-second refresh,
+        because localConfig.lora (region/preset) is often not populated yet
+        when deviceInfoReady first fires — retrying every second fills it in
+        as soon as the config arrives.
+        """
+        if "frequency" not in self._hw_labels:
+            return
+        _, v_lbl, _ = self._hw_labels["frequency"]
+        try:
+            freq = self.manager.get_radio_frequency()
+        except Exception:
+            log.debug("Could not compute frequency", exc_info=True)
+            freq = None
+        if freq:
+            v_lbl.setText(
+                f"{freq['frequency_mhz']} MHz  "
+                f"(BW {freq['bandwidth_khz']:.0f} kHz, "
+                f"ch #{freq['channel_num']})")
+        # else: leave whatever was there ("—") until config arrives
 
     def _on_node_updated(self, node_id: str, node: dict):
         if node_id == self.manager.my_node_id:
@@ -896,6 +909,15 @@ class InfoPage(QWidget):
                 tx_lbl.setText(self._humanize_age_short(age) if age is not None else "—")
         except Exception:
             log.debug("last rx/tx refresh failed", exc_info=True)
+
+        # Retry the frequency calc until localConfig.lora is populated
+        try:
+            _, fl, _ = self._hw_labels.get("frequency", (None, None, None))
+            if fl is not None and (not fl.text() or fl.text() == "—"
+                                   or "MHz" not in fl.text()):
+                self._update_frequency_label()
+        except Exception:
+            pass
 
         dm = self._my_metrics
         bat = dm.get("batteryLevel")

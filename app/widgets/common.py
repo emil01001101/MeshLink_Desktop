@@ -5,6 +5,7 @@ Reusable widgets.
 from __future__ import annotations
 
 import time
+import logging
 from datetime import datetime
 from typing import Optional
 
@@ -16,6 +17,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..theme import Colors
+
+log = logging.getLogger("meshlink.widgets")
 
 
 # ===========================================================================
@@ -225,14 +228,27 @@ class MessageBubble(QWidget):
         ts_str = datetime.fromtimestamp(self._ts).strftime("%H:%M")
         if not self._is_me:
             return ts_str
-        icon_map = {
-            "pending":   self.STATUS_PENDING,
-            "sent":      self.STATUS_SENT,
-            "delivered": self.STATUS_DELIVERED,
-            "failed":    self.STATUS_FAILED,
+        # V20-turn14: render the delivery status with a distinct, brighter
+        # colour so the ✓ / ✓✓ ticks are clearly visible (previously they
+        # were the same dim grey as the timestamp). Blue for sent/delivered
+        # (like common messengers), amber for pending, red for failed.
+        BLUE  = "#3B9EFF"
+        AMBER = "#F5B946"
+        RED   = "#F0584B"
+        status_html = {
+            "pending":   f'<span style="color:{AMBER};font-size:13px;">'
+                         f'{self.STATUS_PENDING}</span>',
+            "sent":      f'<span style="color:{BLUE};font-size:14px;'
+                         f'font-weight:700;">{self.STATUS_SENT}</span>',
+            "delivered": f'<span style="color:{BLUE};font-size:14px;'
+                         f'font-weight:700;">{self.STATUS_DELIVERED}</span>',
+            "failed":    f'<span style="color:{RED};font-size:14px;'
+                         f'font-weight:700;">{self.STATUS_FAILED}</span>',
         }
-        icon = icon_map.get(self._status, "")
-        return f"{ts_str}  {icon}" if icon else ts_str
+        icon = status_html.get(self._status, "")
+        # The timestamp stays in the muted meta colour
+        ts_html = f'<span style="color:{Colors.TEXT_DIM};">{ts_str}</span>'
+        return f"{ts_html}&nbsp;&nbsp;{icon}" if icon else ts_html
 
     def _setup_ui(self, text, is_me, sender_name, timestamp):
         outer = QHBoxLayout(self)
@@ -314,6 +330,7 @@ class MessageBubble(QWidget):
         self._ts = timestamp or int(time.time())
         self._meta_label = QLabel(self._build_meta_text())
         self._meta_label.setObjectName("BubbleMeta")
+        self._meta_label.setTextFormat(Qt.RichText)   # render colored ticks
         self._meta_label.setAlignment(Qt.AlignRight if is_me else Qt.AlignLeft)
         inner.addWidget(self._meta_label)
 
@@ -474,7 +491,12 @@ class NodeCard(QFrame):
         card gets created with is_me=False and the SignalIndicator shows
         the generic "Signal: unknown" tooltip instead of "Own node — signal
         not measured". Calling this when my_node_id becomes known fixes
-        the tooltip + avatar styling without re-creating the card.
+        the tooltip + avatar styling.
+
+        V20-turn14: updates the avatar IN PLACE (no deleteLater) — the old
+        approach destroyed and recreated the QLabel, which crashed with
+        "Internal C++ object already deleted" when a queued repaint or the
+        per-second Info refresh still held a reference to the freed label.
         """
         if self.is_me == is_me:
             return
@@ -483,20 +505,18 @@ class NodeCard(QFrame):
             self.signal.set_own_node(is_me)
         except Exception:
             pass
-        # Re-create the avatar with the new is_me flag so it gets the
-        # proper "you" tinting.
+        # Re-style the avatar in place: flip the "role" property and force
+        # a stylesheet re-polish. No widget destruction → no dangling refs.
         try:
-            old = self.avatar
-            short = old.text() if hasattr(old, "text") else "??"
-            from .common import ShortNameAvatar
-            parent_lay = old.parentWidget().layout()
-            idx = parent_lay.indexOf(old)
-            new_av = ShortNameAvatar(short, is_me=is_me, size=44)
-            parent_lay.insertWidget(idx, new_av)
-            old.deleteLater()
-            self.avatar = new_av
+            av = self.avatar
+            av.setProperty("role", "me" if is_me else "")
+            style = av.style()
+            if style:
+                style.unpolish(av)
+                style.polish(av)
+            av.update()
         except Exception:
-            pass
+            log.debug("set_is_me: avatar restyle failed", exc_info=True)
 
     def _build_ui(self):
         root = QVBoxLayout(self)
