@@ -231,6 +231,7 @@ class ConsolePage(QWidget):
         self.manager = manager
         self._show_raw = False
         self._show_pylog = True
+        self._show_explain = True
         self._filter_level = logging.INFO
         # cache of latest local_stats (populated from TELEMETRY packets)
         self._latest_local_stats: dict = {}
@@ -257,6 +258,16 @@ class ConsolePage(QWidget):
         self.cb_raw.setToolTip("Stream every received packet as JSON")
         self.cb_raw.toggled.connect(self._toggle_raw)
         tb.addWidget(self.cb_raw)
+
+        # V0.44: plain-English explanation of each RX/TX packet, ON by
+        # default so non-technical users can understand the radio traffic.
+        self.cb_explain = QCheckBox("Explain activity")
+        self.cb_explain.setChecked(True)
+        self.cb_explain.setToolTip(
+            "Show a short, plain-English description of each packet "
+            "sent/received (what it is and who it's from)")
+        self.cb_explain.toggled.connect(self._toggle_explain)
+        tb.addWidget(self.cb_explain)
 
         self.cb_pylog = QCheckBox("Python log")
         self.cb_pylog.setChecked(True)
@@ -420,6 +431,14 @@ class ConsolePage(QWidget):
                 self._latest_local_stats = dict(stats)
         except Exception:
             pass
+        # V0.44: friendly plain-English explanation (max ~150 chars)
+        if self._show_explain:
+            try:
+                line = self._explain_packet(packet)
+                if line:
+                    self._println(f"[{_ts()}] {line}", color=Colors.TEXT_SECONDARY)
+            except Exception:
+                log.debug("explain_packet failed", exc_info=True)
         if not self._show_raw:
             return
         try:
@@ -430,6 +449,81 @@ class ConsolePage(QWidget):
             self._println(f"[{_ts()}] [PKT] {text}", color=Colors.TEXT_DIM)
         except Exception:
             self._println(f"[{_ts()}] [PKT] {packet}", color=Colors.TEXT_DIM)
+
+    def _explain_packet(self, packet: dict) -> str:
+        """Return a short, plain-English description of a packet (<=150 chars).
+
+        Designed for non-technical users: says what kind of data it is and
+        who it came from, in everyday language. Example:
+          "📥 Received: Node-7F shared its battery & signal status"
+        """
+        if not isinstance(packet, dict):
+            return ""
+        dec = packet.get("decoded") or {}
+        port = dec.get("portnum") or packet.get("portnum") or ""
+        from_id = packet.get("fromId") or packet.get("from") or "a node"
+        to_id = packet.get("toId") or packet.get("to")
+        my = self.manager.my_node_id
+        # Is this our own outgoing packet (TX) or incoming (RX)?
+        is_tx = (str(from_id) == str(my)) if my else False
+        who = "you" if is_tx else str(from_id)
+
+        # Direct message vs broadcast
+        is_broadcast = str(to_id) in ("^all", "!ffffffff", "4294967295", "None", "")
+        target = "everyone" if is_broadcast else str(to_id)
+
+        EXPLAIN = {
+            "TEXT_MESSAGE_APP":
+                (f"📤 Sending your message to {target}" if is_tx
+                 else f"📥 {who} sent a text message"),
+            "POSITION_APP":
+                (f"📤 Sharing your location with {target}" if is_tx
+                 else f"📍 {who} shared its GPS location"),
+            "NODEINFO_APP":
+                (f"📤 Announcing your node name & hardware" if is_tx
+                 else f"🪪 {who} announced its name and hardware type"),
+            "USER":
+                f"🪪 {who} announced its name and hardware type",
+            "ROUTING_APP":
+                f"✅ Delivery confirmation received for a sent packet",
+            "NEIGHBORINFO_APP":
+                f"🔗 {who} listed the nodes it can hear directly",
+            "TRACEROUTE_APP":
+                f"🧭 {who} replied to a network route trace",
+            "ADMIN_APP":
+                f"⚙️ {who} sent a remote config/admin command",
+            "RANGE_TEST_APP":
+                f"📏 {who} sent a range-test ping",
+            "DETECTION_SENSOR_APP":
+                f"🚨 {who} triggered a detection sensor",
+            "WAYPOINT_APP":
+                f"📌 {who} shared a map waypoint",
+            "STORE_FORWARD_APP":
+                f"📦 {who} sent a store-and-forward message",
+            "PAXCOUNTER_APP":
+                f"👥 {who} reported nearby device counts",
+        }
+
+        # Telemetry needs sub-type detection
+        if port == "TELEMETRY_APP":
+            tel = dec.get("telemetry") or {}
+            if tel.get("localStats") or tel.get("local_stats"):
+                return f"📊 {who} sent router stats (packet counts, uptime)"[:150]
+            if tel.get("environmentMetrics") or tel.get("environment_metrics"):
+                return f"🌡️ {who} reported sensor data (temp, humidity, pressure)"[:150]
+            if tel.get("powerMetrics") or tel.get("power_metrics"):
+                return f"🔌 {who} reported power/voltage readings"[:150]
+            return f"🔋 {who} reported its battery & signal status"[:150]
+
+        line = EXPLAIN.get(port)
+        if line:
+            return line[:150]
+        # Unknown port — generic but still friendly
+        nice = str(port).replace("_APP", "").replace("_", " ").lower() or "data"
+        return f"📡 {who} sent {nice} data"[:150]
+
+    def _toggle_explain(self, checked):
+        self._show_explain = bool(checked)
 
     def _on_python_log(self, level_name: str, logger_name: str, formatted_msg: str):
         """Handler for LogBus.logMessage(str, str, str) = (level, name, msg).

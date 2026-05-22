@@ -138,6 +138,9 @@ class SettingsPage(QWidget):
         # ============== Quick Device Config ==============
         self._build_quick_config(root)
 
+        # ============== Watchlist / Alerts ==============
+        self._build_watchlist(root)
+
         # ============== Actions ==============
         actions = QFrame()
         actions.setObjectName("Card")
@@ -186,6 +189,108 @@ class SettingsPage(QWidget):
         abl.addWidget(self.lbl_log_hint)
         root.addWidget(about)
         root.addStretch(1)
+
+    def _build_watchlist(self, root):
+        """🔔 Watchlist / Alerts — notify when a watched node comes online or
+        a watched keyword appears in a message. Good for fixed base stations."""
+        from ..watchlist import Watchlist
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem
+        wl = Watchlist.get()
+
+        card = QFrame(); card.setObjectName("Card")
+        v = QVBoxLayout(card); v.setContentsMargins(18, 16, 18, 16); v.setSpacing(10)
+        title = QLabel("🔔  Watchlist & Alerts")
+        title.setProperty("role", "section")
+        v.addWidget(title)
+        hint = QLabel(
+            "Get a desktop notification + sound when a watched node comes "
+            "back online, or when a message contains a keyword (e.g. SOS, "
+            "your name). Ideal for an always-on station.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {Colors.TEXT_SECONDARY}; font-size: 11px;")
+        v.addWidget(hint)
+
+        self.wl_enabled = QCheckBox("Enable watchlist alerts")
+        self.wl_enabled.setChecked(wl.enabled)
+        self.wl_enabled.toggled.connect(lambda c: setattr(Watchlist.get(), "enabled", c))
+        v.addWidget(self.wl_enabled)
+
+        # Nodes
+        cols = QHBoxLayout()
+        # --- nodes column ---
+        ncol = QVBoxLayout()
+        ncol.addWidget(QLabel("Watched nodes (by ID):"))
+        self.wl_node_list = QListWidget()
+        self.wl_node_list.setMaximumHeight(90)
+        for n in wl.nodes:
+            self.wl_node_list.addItem(n)
+        ncol.addWidget(self.wl_node_list)
+        nrow = QHBoxLayout()
+        self.wl_node_input = QLineEdit()
+        self.wl_node_input.setPlaceholderText("!a1b2c3d4")
+        nrow.addWidget(self.wl_node_input, 1)
+        btn_add_node = QPushButton("Add")
+        btn_add_node.clicked.connect(self._wl_add_node)
+        nrow.addWidget(btn_add_node)
+        btn_del_node = QPushButton("Remove")
+        btn_del_node.clicked.connect(self._wl_remove_node)
+        nrow.addWidget(btn_del_node)
+        ncol.addLayout(nrow)
+        cols.addLayout(ncol)
+
+        # --- keywords column ---
+        kcol = QVBoxLayout()
+        kcol.addWidget(QLabel("Watched keywords:"))
+        self.wl_kw_list = QListWidget()
+        self.wl_kw_list.setMaximumHeight(90)
+        for k in wl.keywords:
+            self.wl_kw_list.addItem(k)
+        kcol.addWidget(self.wl_kw_list)
+        krow = QHBoxLayout()
+        self.wl_kw_input = QLineEdit()
+        self.wl_kw_input.setPlaceholderText("SOS, urgent, my name…")
+        krow.addWidget(self.wl_kw_input, 1)
+        btn_add_kw = QPushButton("Add")
+        btn_add_kw.clicked.connect(self._wl_add_kw)
+        krow.addWidget(btn_add_kw)
+        btn_del_kw = QPushButton("Remove")
+        btn_del_kw.clicked.connect(self._wl_remove_kw)
+        krow.addWidget(btn_del_kw)
+        kcol.addLayout(krow)
+        cols.addLayout(kcol)
+
+        v.addLayout(cols)
+        root.addWidget(card)
+
+    def _wl_add_node(self):
+        from ..watchlist import Watchlist
+        nid = self.wl_node_input.text().strip()
+        if nid:
+            Watchlist.get().add_node(nid)
+            self.wl_node_list.addItem(nid)
+            self.wl_node_input.clear()
+
+    def _wl_remove_node(self):
+        from ..watchlist import Watchlist
+        it = self.wl_node_list.currentItem()
+        if it:
+            Watchlist.get().remove_node(it.text())
+            self.wl_node_list.takeItem(self.wl_node_list.row(it))
+
+    def _wl_add_kw(self):
+        from ..watchlist import Watchlist
+        kw = self.wl_kw_input.text().strip()
+        if kw:
+            Watchlist.get().add_keyword(kw)
+            self.wl_kw_list.addItem(kw)
+            self.wl_kw_input.clear()
+
+    def _wl_remove_kw(self):
+        from ..watchlist import Watchlist
+        it = self.wl_kw_list.currentItem()
+        if it:
+            Watchlist.get().remove_keyword(it.text())
+            self.wl_kw_list.takeItem(self.wl_kw_list.row(it))
 
     def _build_quick_config(self, root):
         """A compact panel to configure the most common device settings

@@ -13,7 +13,7 @@ import logging
 import webbrowser
 from typing import Dict, Optional
 
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl, QObject, Slot
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QPushButton,
@@ -48,6 +48,7 @@ LEAFLET_HTML = """<!DOCTYPE html>
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 <style>
   html, body { margin:0; padding:0; height:100%; background:#0F1115; }
   #map { height:100vh; width:100vw; background:#1A1E27; }
@@ -109,6 +110,11 @@ LEAFLET_HTML = """<!DOCTYPE html>
         <a class="popup-link" href="${gmaps}" target="_blank">Google Maps</a> ·
         <a class="popup-link" href="${osm}" target="_blank">OpenStreetMap</a>
       </div>
+      <div class="popup-row" style="margin-top:6px;">
+        <a class="popup-link" href="#" style="font-weight:700;"
+           onclick="window.showNodeDetails('${node.id}'); return false;">
+           🔍 Show full details</a>
+      </div>
     `;
   }
 
@@ -144,6 +150,19 @@ LEAFLET_HTML = """<!DOCTYPE html>
     const me = Object.values(markers).find(m => m.options.icon.options.className.includes('me'));
     if (me) map.setView(me.getLatLng(), 13);
   };
+
+  // V0.44: bridge to Python so "Show full details" opens the native dialog
+  window.showNodeDetails = function(id) { /* replaced once channel ready */ };
+  if (typeof QWebChannel !== 'undefined') {
+    new QWebChannel(qt.webChannelTransport, function(channel) {
+      window.pybridge = channel.objects.pybridge;
+      window.showNodeDetails = function(id) {
+        if (window.pybridge && window.pybridge.nodeClicked) {
+          window.pybridge.nodeClicked(id);
+        }
+      };
+    });
+  }
 </script>
 </body></html>
 """
@@ -152,6 +171,21 @@ LEAFLET_HTML = """<!DOCTYPE html>
 # ===========================================================================
 # MapPage
 # ===========================================================================
+class _MapBridge(QObject):
+    """JS↔Python bridge for the Leaflet map. JS calls pybridge.nodeClicked(id)
+    when the user clicks 'Show full details' in a marker popup."""
+    def __init__(self, page):
+        super().__init__()
+        self._page = page
+
+    @Slot(str)
+    def nodeClicked(self, node_id: str):
+        try:
+            self._page.open_node_details(node_id)
+        except Exception:
+            log.exception("nodeClicked bridge failed")
+
+
 class MapPage(QWidget):
 
     def __init__(self, manager: MeshtasticManager, parent=None):
@@ -209,6 +243,16 @@ class MapPage(QWidget):
     def _build_webengine_map(self, root_layout: QVBoxLayout):
         try:
             self.web = QWebEngineView()
+            # V0.44: QWebChannel bridge so JS marker clicks open the native
+            # NodeDetailsDialog (same popup as Nodes "Show Details").
+            try:
+                from PySide6.QtWebChannel import QWebChannel
+                self._map_bridge = _MapBridge(self)
+                self._channel = QWebChannel(self.web.page())
+                self._channel.registerObject("pybridge", self._map_bridge)
+                self.web.page().setWebChannel(self._channel)
+            except Exception:
+                log.exception("QWebChannel bridge setup failed")
             self.web.setHtml(LEAFLET_HTML, QUrl("about:blank"))
             self.web.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             root_layout.addWidget(self.web, 1)
@@ -217,6 +261,20 @@ class MapPage(QWidget):
             global HAS_WEBENGINE
             HAS_WEBENGINE = False
             self._build_fallback(root_layout)
+
+    def open_node_details(self, node_id: str):
+        """Open the full NodeDetailsDialog for a node clicked on the map."""
+        try:
+            node = self.node_data.get(node_id)
+            if node is None:
+                # fall back to live manager data
+                nodes = getattr(self.manager.interface, "nodes", {}) or {}
+                node = nodes.get(node_id, {})
+            from ..dialogs.node_details_dialog import NodeDetailsDialog
+            dlg = NodeDetailsDialog(node_id, node, self.window())
+            dlg.exec()
+        except Exception:
+            log.exception("open_node_details failed")
 
     def _build_fallback(self, root_layout: QVBoxLayout):
         wrap = QFrame()

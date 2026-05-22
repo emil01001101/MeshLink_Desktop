@@ -1019,6 +1019,18 @@ class MeshtasticManager(QObject):
                         from_id, environment_metrics=environment)
                 elif power_metrics:
                     log.info(f"     powerMetrics={power_metrics}")
+                    # V0.44: persist INA219/INA260 ch1 voltage+current so the
+                    # Info Power graph can show charge/consume over time.
+                    try:
+                        from .telemetry_db import TelemetryDB
+                        TelemetryDB.get().add_power_reading(
+                            node_id=from_id,
+                            timestamp=int(tel.get("time") or time.time()),
+                            ch1_voltage=power_metrics.get("ch1Voltage"),
+                            ch1_current=power_metrics.get("ch1Current"),
+                        )
+                    except Exception:
+                        log.exception("Failed to save power telemetry to DB")
                     self._emit_node_update_merged(
                         from_id, power_metrics=power_metrics)
                 else:

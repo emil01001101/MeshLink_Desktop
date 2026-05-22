@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.0] — 2026-05-22
+
+### Added
+- **🎮 Games tab — Tic-Tac-Toe over the mesh**: a tiny, bandwidth-friendly
+  two-player game. Pick an opponent node and play; each move is a single ~8-byte
+  DM (MLTTT: protocol). Game messages are filtered out of the normal chat.
+- **🔔 Watchlist & Alerts** (Settings): get a desktop notification + sound when
+  a watched node comes back online, or when a message contains a watched keyword
+  (e.g. SOS, your name). Ideal for an always-on base station. Persisted across
+  restarts.
+- **⚡ Power graph** in Info: plots INA219/INA260 voltage, current (+charge /
+  −draw) and power (mW) over time — see a solar panel's real-world yield.
+- **Delete conversations**: a trash button in the Messages header clears a DM
+  or channel's local history (with confirmation).
+- **Map → click a node → full details**: the marker popup's "Show full details"
+  opens the same NodeDetailsDialog as the Nodes tab (via a QWebChannel bridge).
+- **Console "Explain activity"** mode (on by default): every RX/TX packet gets a
+  short plain-English description (≤150 chars), e.g. "📍 Node-7F shared its GPS
+  location" or "📤 Sending your message to Node-3C".
+
+
 ## [0.43.0] — 2026-05-22
 
 ### Added

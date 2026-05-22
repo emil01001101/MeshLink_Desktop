@@ -62,7 +62,11 @@ class TelemetryDB:
                 existing = {row[1] for row in
                             c.execute("PRAGMA table_info(telemetry)")}
                 for col in ("temperature", "humidity", "pressure",
-                            "gas_resistance", "iaq"):
+                            "gas_resistance", "iaq",
+                            # V0.44: INA219/INA260 power monitoring (ch1)
+                            "ch1_voltage", "ch1_current",
+                            # derived/estimated power in mW (voltage*current)
+                            "power_mw"):
                     if col not in existing:
                         try:
                             c.execute(
@@ -114,6 +118,32 @@ class TelemetryDB:
         except Exception:
             log.exception("Insert env telemetry error")
 
+    def add_power_reading(self, node_id: str, timestamp: int,
+                          ch1_voltage=None, ch1_current=None):
+        """Store an INA219/INA260 power reading (ch1).
+
+        current > 0 typically means charging (into battery), current < 0
+        means discharging (device drawing power). We also store derived
+        power in mW (|V * I|) so the Info graph can show consumption.
+        """
+        if ch1_voltage is None and ch1_current is None:
+            return
+        power_mw = None
+        if ch1_voltage is not None and ch1_current is not None:
+            try:
+                power_mw = float(ch1_voltage) * float(ch1_current)
+            except Exception:
+                power_mw = None
+        try:
+            with self._lock, self._conn() as c:
+                c.execute(
+                    "INSERT INTO telemetry(node_id, timestamp, ch1_voltage, "
+                    "ch1_current, power_mw) VALUES (?,?,?,?,?)",
+                    (node_id, timestamp, ch1_voltage, ch1_current, power_mw)
+                )
+        except Exception:
+            log.exception("Insert power telemetry error")
+
     def get_history(self, node_id: str, since_seconds: int = 86400) -> List[dict]:
         """Citiri din ultimele N secunde (default 24h)."""
         cutoff = int(time.time()) - since_seconds
@@ -122,7 +152,8 @@ class TelemetryDB:
                 rows = c.execute(
                     "SELECT timestamp, battery_level, voltage, "
                     "channel_utilization, air_util_tx, uptime_seconds, "
-                    "temperature, humidity, pressure, gas_resistance, iaq "
+                    "temperature, humidity, pressure, gas_resistance, iaq, "
+                    "ch1_voltage, ch1_current, power_mw "
                     "FROM telemetry WHERE node_id=? AND timestamp>=? "
                     "ORDER BY timestamp ASC",
                     (node_id, cutoff)

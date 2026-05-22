@@ -189,6 +189,34 @@ class MessageDB:
             log.exception("get_dm_partners error")
             return []
 
+    def clear_channel(self, channel: int) -> int:
+        """Delete all broadcast messages on a given channel. Returns rows deleted."""
+        try:
+            with self._lock, self._conn() as c:
+                cur = c.execute(
+                    "DELETE FROM messages WHERE channel = ? "
+                    "AND (to_id IS NULL OR to_id IN ('^all','!ffffffff',''))",
+                    (channel,)
+                )
+                return cur.rowcount
+        except Exception:
+            log.exception("clear_channel error")
+            return 0
+
+    def clear_dm(self, my_id: str, partner_id: str) -> int:
+        """Delete the DM conversation between me and one partner. Returns rows."""
+        try:
+            with self._lock, self._conn() as c:
+                cur = c.execute(
+                    "DELETE FROM messages WHERE "
+                    "(from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?)",
+                    (my_id, partner_id, partner_id, my_id)
+                )
+                return cur.rowcount
+        except Exception:
+            log.exception("clear_dm error")
+            return 0
+
     def clear_all(self):
         try:
             with self._lock, self._conn() as c:

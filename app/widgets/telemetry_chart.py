@@ -115,8 +115,10 @@ class TelemetryChart(QWidget):
         self.mode_group.setExclusive(True)
         self.btn_mode_device = self._mk_mode_btn("📊  Device", "device")
         self.btn_mode_env    = self._mk_mode_btn("🌡  Environment", "env")
+        self.btn_mode_power  = self._mk_mode_btn("⚡  Power", "power")
         bar_l.addWidget(self.btn_mode_device)
         bar_l.addWidget(self.btn_mode_env)
+        bar_l.addWidget(self.btn_mode_power)
 
         bar_l.addStretch(1)
 
@@ -192,6 +194,25 @@ class TelemetryChart(QWidget):
         )
         self.right_vb.addItem(self.curve_gas)
 
+        # ----- POWER curves (V0.44): current (mA) on left, voltage on right -----
+        # current > 0 = charging into battery (e.g. from solar), < 0 = device
+        # drawing power. power_mw shows total consumption/generation.
+        CL_CURRENT = "#67EA94"   # green - current
+        CL_POWER   = "#F0584B"   # red - power (mW)
+        self.curve_current = self.plot.plot(
+            [], [], pen=pg.mkPen(CL_CURRENT, width=2),
+            symbol="o", symbolSize=5, symbolBrush=CL_CURRENT, symbolPen=None,
+        )
+        self.curve_power = self.plot.plot(
+            [], [], pen=pg.mkPen(CL_POWER, width=2, style=Qt.DashLine),
+            symbol="o", symbolSize=4, symbolBrush=CL_POWER, symbolPen=None,
+        )
+        # Power-mode voltage on the right axis
+        self.curve_pvoltage = pg.PlotCurveItem(
+            x=[], y=[], pen=pg.mkPen(CL_VOLTAGE, width=2)
+        )
+        self.right_vb.addItem(self.curve_pvoltage)
+
         # Start hidden in device mode
         self._apply_mode_visibility()
 
@@ -237,6 +258,8 @@ class TelemetryChart(QWidget):
         if not hasattr(self, "curve_battery"):
             return
         device = (self._mode == "device")
+        env = (self._mode == "env")
+        power = (self._mode == "power")
         # device curves
         for c in (self.curve_battery, self.curve_chutil, self.curve_air,
                   self.curve_voltage):
@@ -244,7 +267,12 @@ class TelemetryChart(QWidget):
         # env curves
         for c in (self.curve_temp, self.curve_humid,
                   self.curve_press, self.curve_gas):
-            c.setVisible(not device)
+            c.setVisible(env)
+        # power curves
+        if hasattr(self, "curve_current"):
+            for c in (self.curve_current, self.curve_power,
+                      self.curve_pvoltage):
+                c.setVisible(power)
         # Update axis labels + ranges to match the active mode
         if device:
             self.plot.setLabel("left", "Battery / ChUtil / AirUtil  (%)",
@@ -254,13 +282,19 @@ class TelemetryChart(QWidget):
             self.plot.setYRange(0, 110, padding=0)
             self.right_vb.setYRange(2.8, 4.4, padding=0)
             self.right_vb.enableAutoRange(axis="y", enable=False)
+        elif power:
+            self.plot.setLabel("left", "Current (mA)  +charge / −draw",
+                               color=Colors.TEXT_SECONDARY)
+            self.plot.getAxis("right").setLabel("Voltage (V)",
+                                                color=Colors.TEXT_SECONDARY)
+            self.plot.enableAutoRange(axis="y", enable=True)
+            self.right_vb.setYRange(2.8, 4.4, padding=0)
+            self.right_vb.enableAutoRange(axis="y", enable=False)
         else:
             self.plot.setLabel("left", "Temperature (°C) / Humidity (%)",
                                color=Colors.TEXT_SECONDARY)
             self.plot.getAxis("right").setLabel("Pressure (hPa) / Gas (MΩ)",
                                                 color=Colors.TEXT_SECONDARY)
-            # Let temp/humid use a sensible range; humid can be 0-100, temp
-            # can be -20..50. Show both: 0..100 with a bit of headroom.
             self.plot.enableAutoRange(axis="y", enable=True)
             self.right_vb.enableAutoRange(axis="y", enable=True)
 
@@ -334,10 +368,13 @@ class TelemetryChart(QWidget):
                     if (r.get("timestamp") or 0) >= cutoff]
 
         if not readings:
-            for c in (self.curve_battery, self.curve_chutil, self.curve_air,
-                      self.curve_voltage,
-                      self.curve_temp, self.curve_humid,
-                      self.curve_press, self.curve_gas):
+            empties = [self.curve_battery, self.curve_chutil, self.curve_air,
+                       self.curve_voltage, self.curve_temp, self.curve_humid,
+                       self.curve_press, self.curve_gas]
+            if hasattr(self, "curve_current"):
+                empties += [self.curve_current, self.curve_power,
+                            self.curve_pvoltage]
+            for c in empties:
                 c.setData([], [])
             return
 
@@ -365,6 +402,31 @@ class TelemetryChart(QWidget):
             self.curve_voltage.setData(ts, voltage)
             if ts:
                 self.plot.setXRange(min(ts), max(ts) + 1, padding=0.05)
+        elif self._mode == "power":
+            # Power mode: INA219/INA260 readings — voltage, current, power.
+            def pseries(field):
+                xs, ys = [], []
+                for r in readings:
+                    v = r.get(field)
+                    if v is None:
+                        continue
+                    xs.append(r.get("timestamp") or 0)
+                    ys.append(v)
+                return xs, ys
+            cx, cy = pseries("ch1_current")
+            vx, vy = pseries("ch1_voltage")
+            wx, wy = pseries("power_mw")
+            self.curve_current.setData(cx, cy)
+            self.curve_pvoltage.setData(vx, vy)
+            self.curve_power.setData(wx, wy)
+            all_ts = cx + vx + wx
+            if all_ts:
+                self.plot.setXRange(min(all_ts), max(all_ts) + 1, padding=0.05)
+            else:
+                # No power data yet — show a hint via empty curves
+                for c in (self.curve_current, self.curve_pvoltage,
+                          self.curve_power):
+                    c.setData([], [])
         else:
             rows = [r for r in readings
                     if (r.get("temperature") is not None
@@ -417,6 +479,12 @@ class TelemetryChart(QWidget):
                 f"<span style='color:{CL_VOLTAGE}'>● {t('chart.legend.voltage')}</span>&nbsp;&nbsp;"
                 f"<span style='color:{CL_CHUTIL}'>● {t('chart.legend.chutil')}</span>&nbsp;&nbsp;"
                 f"<span style='color:{CL_AIRUTIL}'>● {t('chart.legend.airutil')}</span>"
+            )
+        elif getattr(self, "_mode", "device") == "power":
+            self.lbl_legend.setText(
+                f"<span style='color:#67EA94'>● Current (mA, +charge/−draw)</span>&nbsp;&nbsp;"
+                f"<span style='color:{CL_VOLTAGE}'>● Voltage (V)</span>&nbsp;&nbsp;"
+                f"<span style='color:#F0584B'>● Power (mW)</span>"
             )
         else:
             self.plot.setLabel("left", t("chart.env_left_axis"),

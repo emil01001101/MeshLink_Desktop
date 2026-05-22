@@ -32,6 +32,7 @@ from .pages.info_page     import InfoPage
 from .pages.scanner_page  import ScannerPage
 from .pages.map_page      import MapPage
 from .pages.console_page  import ConsolePage
+from .pages.games_page    import GamesPage
 from .pages.scripts_page  import ScriptsPage
 from .pages.modules_page  import ModulesPage
 from .pages.settings_page import SettingsPage
@@ -53,7 +54,8 @@ TAB_MAP      = 5
 TAB_SCRIPTS  = 6
 TAB_MODULES  = 7
 TAB_CONSOLE  = 8
-TAB_SETTINGS = 9
+TAB_GAMES    = 9   # V0.44: Tic-Tac-Toe over mesh
+TAB_SETTINGS = 10
 
 
 class MainWindow(QMainWindow):
@@ -134,6 +136,7 @@ class MainWindow(QMainWindow):
         self.page_scripts  = ScriptsPage(self.manager)
         self.page_modules  = ModulesPage(self.manager)
         self.page_console  = ConsolePage(self.manager)
+        self.page_games    = GamesPage(self.manager)
         self.page_settings = SettingsPage(self.manager)
 
         self.tabs.addTab(self.page_messages, "")
@@ -145,6 +148,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.page_scripts,  "")
         self.tabs.addTab(self.page_modules,  "")
         self.tabs.addTab(self.page_console,  "")
+        self.tabs.addTab(self.page_games,    "")
         self.tabs.addTab(self.page_settings, "")
 
         # Let the Scanner pause the script scheduler during a scan.
@@ -315,6 +319,7 @@ class MainWindow(QMainWindow):
         self.tabs.setTabText(TAB_SCRIPTS,  "🤖  " + t("tab.scripts"))
         self.tabs.setTabText(TAB_MODULES,  "🧩  " + t("tab.modules"))
         self.tabs.setTabText(TAB_CONSOLE,  "⌘  " + t("tab.console"))
+        self.tabs.setTabText(TAB_GAMES,    "🎮  " + t("tab.games"))
         self.tabs.setTabText(TAB_SETTINGS, "⚙  " + t("tab.settings"))
 
     # =================================================================
@@ -446,6 +451,19 @@ class MainWindow(QMainWindow):
             if dm:
                 self._my_metrics.update(dm)
                 self._my_metrics_ts = int(time.time())
+        # V0.44: watchlist — alert when a watched node comes back online
+        try:
+            from .watchlist import Watchlist
+            wl = Watchlist.get()
+            if wl.enabled and wl.is_watched_node(node_id):
+                if wl.note_node_seen(node_id):
+                    user = (node.get("user") or {})
+                    name = user.get("longName") or user.get("shortName") or node_id
+                    self.sound.play_message()
+                    self.notif.notify("🔔 Watched node online",
+                                      f"{name} is back on the mesh.")
+        except Exception:
+            log.debug("watchlist node check failed", exc_info=True)
 
     def _on_telemetry(self, node_id: str, telemetry: dict):
         if node_id == self.manager.my_node_id:
@@ -462,6 +480,17 @@ class MainWindow(QMainWindow):
     def _on_new_message_notify(self, convo_id: str, sender: str, text: str):
         # SOUND always (relevant even when window is focused)
         self.sound.play_message()
+        # V0.44: watchlist keyword alert — fires even when focused, because
+        # a keyword like "SOS" or "urgent" is important regardless.
+        try:
+            from .watchlist import Watchlist
+            hits = Watchlist.get().match_keywords(text)
+            if hits:
+                self.notif.notify(
+                    f"🔔 Keyword alert: {hits[0]}",
+                    f"{sender}: {text[:90]}")
+        except Exception:
+            log.debug("watchlist keyword check failed", exc_info=True)
         # Tray NOTIFICATION only when window isn't focused
         if not self.isActiveWindow():
             preview = text if len(text) <= 100 else text[:97] + "…"
