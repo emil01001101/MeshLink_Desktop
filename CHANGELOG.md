@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   forces reconnect.
 - `disconnect()` crash on an already-dead TCP socket — raw socket is closed
   first and the expected error is silenced.
+- Thread leak / crash storm after a dropped link — the meshtastic heartbeat
+  timer kept firing on the dead socket, spawning dozens of crashing threads
+  (WinError 10054). Connection-loss and disconnect now cancel the heartbeat
+  timer and close the raw socket so no background thread survives.
 - Console `nodes` crash when hwModel was numeric — values are now coerced to
   str before slicing.
 - Scripts DM mode no longer looks like it also broadcasts — channels are

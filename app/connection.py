@@ -469,32 +469,10 @@ class MeshtasticManager(QObject):
         self._stop_config_timeout()
         if self._iface is not None:
             iface = self._iface
-            # Pre-close the raw transport so close() can't try to write a
-            # disconnect packet over a broken socket.
-            try:
-                # TCP interface: has a .socket
-                sock = getattr(iface, "socket", None)
-                if sock is not None:
-                    try:
-                        sock.close()
-                    except Exception:
-                        pass
-                # Serial / stream interface: has a .stream
-                stream = getattr(iface, "stream", None)
-                if stream is not None:
-                    try:
-                        stream.close()
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            # Now the library close() — should be clean, but guard anyway.
-            try:
-                iface.close()
-            except Exception as e:
-                # Expected when the link already dropped — keep it quiet.
-                log.debug(f"Interface close() raised (expected on dead link): {e}")
             self._iface = None
+            # Full teardown: cancels heartbeat timer + closes raw socket so
+            # no background thread keeps trying to write to a dead link.
+            self._teardown_iface(iface)
         self._my_node_num = None
         self._connection_established_seen = False
         self._set_state("idle")
@@ -666,9 +644,55 @@ class MeshtasticManager(QObject):
             self._reconnect_attempts = 0  # reset on successful connect
             self.progressMessage.emit(t("progress.ready"))
 
+    def _teardown_iface(self, iface):
+        """Forcibly stop a (probably dead) interface so its background timers
+        don't keep firing on a closed socket.
+
+        The meshtastic library arms a self-rescheduling heartbeat timer
+        (threading.Timer) that calls sendHeartbeat() -> socket.send(). When
+        the link drops, that timer keeps firing every few seconds, each time
+        spawning a thread that crashes with WinError 10054. Dozens pile up.
+        We must cancel that timer and close the raw socket so the heartbeat
+        becomes a no-op. Done defensively across library versions.
+        """
+        if iface is None:
+            return
+        # 1) Cancel the self-rescheduling heartbeat timer
+        for attr in ("heartbeatTimer", "_heartbeatTimer"):
+            t_ = getattr(iface, attr, None)
+            if t_ is not None:
+                try:
+                    t_.cancel()
+                except Exception:
+                    pass
+                try:
+                    setattr(iface, attr, None)
+                except Exception:
+                    pass
+        # 2) Close the raw socket/stream so any in-flight send() is a no-op
+        for attr in ("socket", "stream"):
+            s_ = getattr(iface, attr, None)
+            if s_ is not None:
+                try:
+                    s_.close()
+                except Exception:
+                    pass
+        # 3) Best-effort full close (guarded — may itself raise on dead link)
+        try:
+            iface.close()
+        except Exception:
+            pass
+
     def _handle_connection_lost(self):
         log.warning("Connection lost")
+        # Tear down the dead interface FIRST so its heartbeat timer stops
+        # spamming crashed threads on the closed socket.
+        old_iface = self._iface
         self._iface = None
+        try:
+            self._teardown_iface(old_iface)
+        except Exception:
+            log.debug("teardown_iface failed", exc_info=True)
         self._connection_established_seen = False
         self._set_state("idle")
         self.errorMessage.emit(t("err.conn_lost"))
