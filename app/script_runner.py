@@ -360,6 +360,18 @@ class ScriptScheduler(QObject):
         self.timer.start()
         log.info("Script scheduler started")
 
+    def pause(self):
+        """Pause the scheduler (e.g. during an RF scan)."""
+        if self.timer.isActive():
+            self.timer.stop()
+            log.info("Script scheduler paused")
+
+    def resume(self):
+        """Resume the scheduler after a pause."""
+        if not self.timer.isActive():
+            self.timer.start()
+            log.info("Script scheduler resumed")
+
     @staticmethod
     def _parse_channels_csv(s: Any) -> List[int]:
         """Parse a CSV string like "0,1" into [0, 1]. Empty → [0]."""

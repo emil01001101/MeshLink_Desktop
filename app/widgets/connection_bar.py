@@ -104,8 +104,8 @@ class ConnectionBar(QFrame):
         self.btn_refresh.clicked.connect(self.refreshPortsRequested)
         sl.addWidget(self.btn_refresh)
         # V20-turn12: rich serial picker (parallel to BLE 🔍)
-        self.btn_serial_scan = QPushButton("🔍")
-        self.btn_serial_scan.setMaximumWidth(34)
+        self.btn_serial_scan = QPushButton("🔍  Scan")
+        self.btn_serial_scan.setMaximumWidth(80)
         self.btn_serial_scan.setToolTip(
             "Scan and identify connected Meshtastic devices")
         self.btn_serial_scan.clicked.connect(self._open_serial_picker)
@@ -124,9 +124,9 @@ class ConnectionBar(QFrame):
         # via bleak and lets the user pick one. meshtastic-python 2.5+
         # removed auto-scan from BLEInterface, so the address field
         # can't be left blank anymore.
-        self.btn_ble_scan = QPushButton("🔍")
+        self.btn_ble_scan = QPushButton("🔍  Scan")
         self.btn_ble_scan.setToolTip("Scan for nearby BLE Meshtastic devices")
-        self.btn_ble_scan.setFixedWidth(34)
+        self.btn_ble_scan.setFixedWidth(80)
         self.btn_ble_scan.clicked.connect(self._open_ble_picker)
         bl.addWidget(self.btn_ble_scan)
         self.stack.addWidget(ble_w)
@@ -148,8 +148,8 @@ class ConnectionBar(QFrame):
         self.wifi_port.setFixedWidth(80)
         wl.addWidget(self.wifi_port)
         # V20-turn13: scan the local network for Meshtastic TCP devices
-        self.btn_wifi_scan = QPushButton("🔍")
-        self.btn_wifi_scan.setMaximumWidth(34)
+        self.btn_wifi_scan = QPushButton("🔍  Scan")
+        self.btn_wifi_scan.setMaximumWidth(80)
         self.btn_wifi_scan.setToolTip(
             "Scan the local network for Meshtastic devices (port 4403)")
         self.btn_wifi_scan.clicked.connect(self._open_network_scanner)

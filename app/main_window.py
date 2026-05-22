@@ -29,6 +29,7 @@ from .pages.messages_page import MessagesPage
 from .pages.nodes_page    import NodesPage
 from .pages.channels_page import ChannelsPage
 from .pages.info_page     import InfoPage
+from .pages.scanner_page  import ScannerPage
 from .pages.map_page      import MapPage
 from .pages.console_page  import ConsolePage
 from .pages.scripts_page  import ScriptsPage
@@ -47,11 +48,12 @@ TAB_MESSAGES = 0
 TAB_NODES    = 1
 TAB_CHANNELS = 2
 TAB_INFO     = 3
-TAB_MAP      = 4
-TAB_SCRIPTS  = 5
-TAB_MODULES  = 6   # V20-turn3: new tab
-TAB_CONSOLE  = 7
-TAB_SETTINGS = 8
+TAB_SCANNER  = 4   # V20-turn15: RF activity scanner
+TAB_MAP      = 5
+TAB_SCRIPTS  = 6
+TAB_MODULES  = 7
+TAB_CONSOLE  = 8
+TAB_SETTINGS = 9
 
 
 class MainWindow(QMainWindow):
@@ -127,6 +129,7 @@ class MainWindow(QMainWindow):
         self.page_nodes    = NodesPage(self.manager)
         self.page_channels = ChannelsPage(self.manager)
         self.page_info     = InfoPage(self.manager)
+        self.page_scanner  = ScannerPage(self.manager)
         self.page_map      = MapPage(self.manager)
         self.page_scripts  = ScriptsPage(self.manager)
         self.page_modules  = ModulesPage(self.manager)
@@ -137,11 +140,18 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.page_nodes,    "")
         self.tabs.addTab(self.page_channels, "")
         self.tabs.addTab(self.page_info,     "")
+        self.tabs.addTab(self.page_scanner,  "")
         self.tabs.addTab(self.page_map,      "")
         self.tabs.addTab(self.page_scripts,  "")
         self.tabs.addTab(self.page_modules,  "")
         self.tabs.addTab(self.page_console,  "")
         self.tabs.addTab(self.page_settings, "")
+
+        # Let the Scanner pause the script scheduler during a scan.
+        try:
+            self.page_scanner.set_scheduler(self.page_scripts.scheduler)
+        except Exception:
+            pass
 
         root.addWidget(self.tabs, 1)
         root.addWidget(self._build_status_bar())
@@ -253,16 +263,25 @@ class MainWindow(QMainWindow):
         v.addWidget(author)
         # ≤300 char description
         desc = QLabel(
-            "A modern desktop client for Meshtastic LoRa mesh radios. "
-            "Connect over Wi-Fi, Bluetooth or USB. Built with Python + "
-            "PySide6. Open source under GPL-3.0. Built with significant "
-            "AI assistance from Claude (Anthropic)."
+            "MeshLink Desktop started as a personal project — built for my "
+            "own use, out of pure passion for radio and technology. "
+            "I'm sharing the source code freely so others can enjoy it too, "
+            "learn from it, and make it even better together. "
+            "If it's useful to you, that already makes me happy. 🙂\n\n"
+            "Open source under GPL-3.0 · Python + PySide6 · "
+            "crafted with the help of AI (Claude by Anthropic)."
         )
         desc.setWordWrap(True)
         desc.setStyleSheet(
             f"color: {Colors.TEXT_PRIMARY}; "
-            f"font-size: 12px; line-height: 1.5; padding: 6px 0;")
+            f"font-size: 12px; line-height: 1.6; padding: 6px 0;")
         v.addWidget(desc)
+        thanks = QLabel(
+            "Thanks for being here — happy meshing! 📡")
+        thanks.setStyleSheet(
+            f"color: {Colors.PRIMARY}; font-size: 12px; "
+            f"font-style: italic; padding: 2px 0 6px 0;")
+        v.addWidget(thanks)
         link = QLabel(
             '<a href="https://github.com/emil01001101/MeshLink_Desktop" '
             f'style="color: {Colors.PRIMARY}; text-decoration: none;">'
@@ -291,6 +310,7 @@ class MainWindow(QMainWindow):
         self.tabs.setTabText(TAB_NODES,    "📡  " + t("tab.nodes"))
         self.tabs.setTabText(TAB_CHANNELS, "#  " + t("tab.channels"))
         self.tabs.setTabText(TAB_INFO,     "ℹ  " + t("tab.info"))
+        self.tabs.setTabText(TAB_SCANNER,  "📡  " + t("tab.scanner"))
         self.tabs.setTabText(TAB_MAP,      "🗺  " + t("tab.map"))
         self.tabs.setTabText(TAB_SCRIPTS,  "🤖  " + t("tab.scripts"))
         self.tabs.setTabText(TAB_MODULES,  "🧩  " + t("tab.modules"))

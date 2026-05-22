@@ -696,9 +696,9 @@ class ConsolePage(QWidget):
             snr_s = f"{snr:.1f}" if snr is not None else "-"
             self._println(
                 f"  {str(nid):<12} "
-                f"{(user.get('longName')  or '-')[:22]:<22} "
-                f"{(user.get('shortName') or '-')[:6]:<6} "
-                f"{(user.get('hwModel')   or '-')[:12]:<12} "
+                f"{str(user.get('longName')  or '-')[:22]:<22} "
+                f"{str(user.get('shortName') or '-')[:6]:<6} "
+                f"{str(user.get('hwModel')   or '-')[:12]:<12} "
                 f"{snr_s:>6} {bat_s:>5} {_humanize_age(lh):>6}"
             )
 

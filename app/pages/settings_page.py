@@ -266,11 +266,13 @@ class SettingsPage(QWidget):
         self.qc_preset = QComboBox()
         PRESETS = ["LONG_FAST","LONG_SLOW","VERY_LONG_SLOW","MEDIUM_SLOW",
                    "MEDIUM_FAST","SHORT_SLOW","SHORT_FAST","LONG_MODERATE",
-                   "SHORT_TURBO"]
+                   "SHORT_TURBO","LONG_TURBO"]
         self.qc_preset.addItems(PRESETS)
         add_field("Modem preset", self.qc_preset, "preset",
                   lambda: self.qc_preset.currentText(),
-                  "Trade-off between range and speed. LONG_FAST is the default.")
+                  "Named LoRa profile. For a fully custom config (e.g. a "
+                  "narrow-band channel like BW 62.5/SF7/CR5), tick "
+                  "'Use custom LoRa' below instead.")
         self.qc_hop = QSpinBox(); self.qc_hop.setRange(1, 7); self.qc_hop.setValue(3)
         add_field("Hop limit", self.qc_hop, "hop_limit",
                   lambda: self.qc_hop.value(),
@@ -279,6 +281,34 @@ class SettingsPage(QWidget):
         add_field("TX power (dBm, 0=max legal)", self.qc_txpow, "tx_power",
                   lambda: self.qc_txpow.value(),
                   "0 lets the firmware pick the max legal power for your region.")
+
+        # ----- Custom LoRa (advanced) -----
+        add_label_row("CUSTOM LoRa (advanced — overrides preset)")
+        self.qc_use_custom = QCheckBox(
+            "Use custom LoRa parameters instead of a named preset")
+        add_field("", self.qc_use_custom, "use_custom_lora",
+                  lambda: self.qc_use_custom.isChecked(),
+                  "Enable to set bandwidth / spread factor / coding rate "
+                  "manually — for narrow-band channels (e.g. 'SFNarrow').")
+        self.qc_bw = QComboBox(); self.qc_bw.setEditable(True)
+        for b in ["31","62","125","250","500"]:
+            self.qc_bw.addItem(b)
+        self.qc_bw.setCurrentText("250")
+        add_field("Bandwidth (kHz)", self.qc_bw, "bandwidth",
+                  lambda: self._parse_leading_int(self.qc_bw.currentText(), 250),
+                  "Lower = longer range, slower. SFNarrow uses 62 kHz.")
+        self.qc_sf = QSpinBox(); self.qc_sf.setRange(7, 12); self.qc_sf.setValue(7)
+        add_field("Spread factor (SF)", self.qc_sf, "spread_factor",
+                  lambda: self.qc_sf.value(),
+                  "7–12. Higher = longer range, much slower. SFNarrow uses SF7.")
+        self.qc_cr = QSpinBox(); self.qc_cr.setRange(5, 8); self.qc_cr.setValue(5)
+        add_field("Coding rate (CR 4/x)", self.qc_cr, "coding_rate",
+                  lambda: self.qc_cr.value(),
+                  "5–8 (i.e. 4/5..4/8). SFNarrow uses CR5.")
+        self.qc_freq_slot = QSpinBox(); self.qc_freq_slot.setRange(0, 200)
+        add_field("Frequency slot (0=auto)", self.qc_freq_slot, "channel_num",
+                  lambda: self.qc_freq_slot.value(),
+                  "Channel slot within the region band. 0 = auto from channel name.")
 
         # ----- Position -----
         add_label_row("POSITION (fixed)")
@@ -479,10 +509,22 @@ class SettingsPage(QWidget):
             try:
                 lc.lora.region = Config.LoRaConfig.RegionCode.Value(
                     self.qc_region.currentText())
-                lc.lora.modem_preset = Config.LoRaConfig.ModemPreset.Value(
-                    self.qc_preset.currentText())
                 lc.lora.hop_limit = self.qc_hop.value()
                 lc.lora.tx_power = self.qc_txpow.value()
+                if self.qc_use_custom.isChecked():
+                    # Custom LoRa: set BW/SF/CR, disable preset usage
+                    lc.lora.use_preset = False
+                    lc.lora.bandwidth = self._parse_leading_int(
+                        self.qc_bw.currentText(), 250)
+                    lc.lora.spread_factor = self.qc_sf.value()
+                    lc.lora.coding_rate = self.qc_cr.value()
+                else:
+                    lc.lora.use_preset = True
+                    lc.lora.modem_preset = Config.LoRaConfig.ModemPreset.Value(
+                        self.qc_preset.currentText())
+                slot = self.qc_freq_slot.value()
+                if slot > 0:
+                    lc.lora.channel_num = slot
                 ln.writeConfig("lora")
                 applied.append("lora")
             except Exception as e:

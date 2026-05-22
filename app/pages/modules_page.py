@@ -69,10 +69,15 @@ class ModuleForm(QWidget):
     saved = Signal(str)   # emits module_name after successful save
 
     def __init__(self, manager: MeshtasticManager, module_name: str,
-                 description: str = "", parent=None):
+                 description: str = "", config_root: str = "moduleConfig",
+                 parent=None):
         super().__init__(parent)
         self.manager = manager
         self.module_name = module_name
+        # V20-turn15: which protobuf root holds this section. Most modules
+        # live under localNode.moduleConfig, but WiFi/Network is under
+        # localNode.localConfig. config_root selects which one.
+        self.config_root = config_root
         self.description_text = description
         self._fields: Dict[str, Dict[str, Any]] = {}   # name -> {widget, descriptor}
         self._descriptors_loaded = False
@@ -129,8 +134,11 @@ class ModuleForm(QWidget):
         if not self.manager.is_connected:
             return None
         try:
-            return getattr(self.manager.interface.localNode.moduleConfig,
-                           self.module_name, None)
+            root = getattr(self.manager.interface.localNode,
+                           self.config_root, None)
+            if root is None:
+                return None
+            return getattr(root, self.module_name, None)
         except Exception:
             return None
 
@@ -467,7 +475,11 @@ class ModulesPage(QWidget):
     """Tabbed page for managing all module configurations."""
 
     # (proto field name, i18n key, description i18n key)
+    # Sections that live under localConfig instead of moduleConfig
+    LOCAL_CONFIG_SECTIONS = {"network"}
+
     MODULES = [
+        ("network",              "modules.wifi",        "modules.wifi_desc"),
         ("mqtt",                 "modules.mqtt",        "modules.mqtt_desc"),
         ("serial",               "modules.serial",      "modules.serial_desc"),
         ("external_notification","modules.ext_notif",   "modules.ext_notif_desc"),
@@ -507,8 +519,12 @@ class ModulesPage(QWidget):
         root.addWidget(self.tabs, 1)
 
         for module_name, _label_key, desc_key in self.MODULES:
+            config_root = ("localConfig"
+                           if module_name in self.LOCAL_CONFIG_SECTIONS
+                           else "moduleConfig")
             form = ModuleForm(self.manager, module_name,
-                              description=t(desc_key))
+                              description=t(desc_key),
+                              config_root=config_root)
             self._forms[module_name] = form
             if module_name == "range_test":
                 # Range Test gets a special container: form + live stats panel.

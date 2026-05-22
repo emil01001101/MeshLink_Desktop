@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0] — 2026-05-22
+
+### Added
+- **RF Activity Scanner tab** (between Info and Map). A "Start scan" button
+  dedicates the radio to an intensive passive-listen session, pausing the
+  script scheduler and telemetry polling so capture is the priority. Produces
+  a trust report: generic-LoRa / Meshtastic-compatible / decodable-without-key
+  / exact-message-without-PSK / channel-if-PSK-known verdicts, plus per-sender
+  signal stats, hop distribution, channel utilization and a plain-language
+  recommendation. Honest about hardware limits (a node hears only its current
+  band+preset; true wideband scanning needs SDR).
+- **Settings → Quick Device Config**: 22+ controls (Identity, Radio, Custom
+  LoRa BW/SF/CR for narrow-band configs, Position, Broadcast intervals,
+  Display, Buttons/LED, Power saving) with auto-load from device.
+- **Modules → WiFi/Network tab**: set wifi_enabled / SSID / PSK so the device
+  can join Wi-Fi (reads/writes localConfig.network).
+- **Channels → Import from URL/QR link**: paste a meshtastic.org/e/# share
+  link to apply a channel set.
+- **Network scanner** on the TCP connection bar: probes the local /24 subnet
+  for devices on port 4403.
+- **Serial picker**: enriched with VID:PID + manufacturer, Meshtastic-likely
+  chips listed first.
+- **Info tab**: exact operating Frequency (e.g. EU_868 = 869.525 MHz), plus
+  live Last RX / Last TX.
+- **LONG_TURBO** modem preset added (now 10 presets).
+- Connection scan buttons (Serial/BLE/Wi-Fi) labelled "Scan".
+
+### Fixed
+- Crash `RuntimeError: QLabel already deleted` — node-card avatar now updates
+  in place instead of destroy/recreate.
+- Connection stuck on "ready" after the meshtastic reader thread died silently
+  (WinError 10054 after a config write) — watchdog detects the dead reader and
+  forces reconnect.
+- `disconnect()` crash on an already-dead TCP socket — raw socket is closed
+  first and the expected error is silenced.
+- Console `nodes` crash when hwModel was numeric — values are now coerced to
+  str before slicing.
+- Scripts DM mode no longer looks like it also broadcasts — channels are
+  disabled with a clear hint when Direct Message is selected.
+- Info Frequency field stayed blank — now retried each second until the LoRa
+  config arrives.
+- `set`/`get` console commands now support module-config sections and suggest
+  the correct section when a field is in a different one.
+
+### Changed
+- Project renamed **Meshtastic Desktop → MeshLink Desktop** (trademark
+  compliance). Logger names, log folder, QSettings key and the in-app logo
+  updated; README carries a trademark disclaimer.
+- Message delivery ticks (✓ / ✓✓) rendered in blue for visibility.
+- Friendlier About text.
+
+
 ## [0.20.0] — 2026-05-18
 
 First public release.

@@ -304,6 +304,80 @@ class ChannelsPage(QWidget):
         ul.addLayout(btns)
         root.addWidget(url_card)
 
+        # ---- Import channel from URL / QR link ----
+        self.lbl_section_import = QLabel("📥  Import channels from URL / QR link")
+        self.lbl_section_import.setProperty("role", "section")
+        root.addWidget(self.lbl_section_import)
+        import_card = QFrame()
+        import_card.setObjectName("Card")
+        il = QVBoxLayout(import_card)
+        il.setContentsMargins(14, 12, 14, 12)
+        il.setSpacing(8)
+        self.lbl_import_hint = QLabel(
+            "Paste a Meshtastic share link (https://meshtastic.org/e/#…) — "
+            "the same link a QR code encodes. This replaces your channel set "
+            "with the one in the link.")
+        self.lbl_import_hint.setWordWrap(True)
+        self.lbl_import_hint.setStyleSheet(
+            f"color: {Colors.TEXT_DIM}; font-size: 11px;")
+        il.addWidget(self.lbl_import_hint)
+        self.import_input = QPlainTextEdit()
+        self.import_input.setMaximumHeight(60)
+        self.import_input.setPlaceholderText(
+            "https://meshtastic.org/e/#CgMSAQE...")
+        il.addWidget(self.import_input)
+        irow = QHBoxLayout()
+        irow.addStretch(1)
+        self.btn_import_url = QPushButton("📥  Import from link")
+        self.btn_import_url.setObjectName("PrimaryButton")
+        self.btn_import_url.setEnabled(False)
+        self.btn_import_url.clicked.connect(self._import_from_url)
+        irow.addWidget(self.btn_import_url)
+        il.addLayout(irow)
+        self.lbl_import_status = QLabel("")
+        self.lbl_import_status.setWordWrap(True)
+        self.lbl_import_status.setStyleSheet(
+            f"color: {Colors.TEXT_DIM}; font-size: 11px;")
+        il.addWidget(self.lbl_import_status)
+        root.addWidget(import_card)
+
+    def _import_from_url(self):
+        """Apply a Meshtastic channel-set URL (the QR-code payload)."""
+        url = self.import_input.toPlainText().strip()
+        if not url:
+            return
+        if "meshtastic.org/e/#" not in url and not url.startswith("http"):
+            self.lbl_import_status.setText(
+                "✗ That doesn't look like a Meshtastic share link "
+                "(expected https://meshtastic.org/e/#…).")
+            self.lbl_import_status.setStyleSheet(
+                f"color: {Colors.DANGER}; font-size: 11px;")
+            return
+        from PySide6.QtWidgets import QMessageBox
+        confirm = QMessageBox.question(
+            self, "Import channels?",
+            "This will replace your current channel configuration with the "
+            "one encoded in the link. The device will reboot to apply it.\n\n"
+            "Continue?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if confirm != QMessageBox.Yes:
+            return
+        try:
+            ln = self.manager.interface.localNode
+            # meshtastic-python: setURL applies the channel set from the link
+            ln.setURL(url)
+            self.lbl_import_status.setText(
+                "✓ Channels imported. The device is rebooting to apply them — "
+                "it will reconnect automatically.")
+            self.lbl_import_status.setStyleSheet(
+                f"color: {Colors.SUCCESS}; font-size: 11px;")
+            self.import_input.clear()
+        except Exception as e:
+            log.exception("setURL import failed")
+            self.lbl_import_status.setText(f"✗ Import failed: {e}")
+            self.lbl_import_status.setStyleSheet(
+                f"color: {Colors.DANGER}; font-size: 11px;")
+
     def _retranslate(self, *_):
         self.lbl_intro.setText(t("channels.intro"))
         self.lbl_section_active.setText(t("channels.active"))
@@ -321,6 +395,7 @@ class ChannelsPage(QWidget):
     def _on_state(self, state):
         is_ready = (state == "ready")
         self.btn_add.setEnabled(is_ready)
+        self.btn_import_url.setEnabled(is_ready)
         if state == "idle":
             self.channels = []
             self._refresh_list()

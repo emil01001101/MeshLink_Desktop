@@ -261,6 +261,11 @@ class MeshtasticManager(QObject):
     # rxRssi, hopStart, hopLimit, rxTime}.
     rangeTestPacket = Signal(dict)
 
+    # RF scan signals
+    scanProgress  = Signal(dict)   # {elapsed, duration, packets, phase}
+    scanFinished  = Signal(dict)   # full report
+    scanStateChanged = Signal(bool)  # True=scanning, False=idle
+
     # --- Semnal intern pentru dispecerizare cross-thread ---
     # The only 100%-safe way to execute code on the Qt main thread from
     # pubsub callbacks (which run on threads without a Qt event loop).
@@ -337,6 +342,18 @@ class MeshtasticManager(QObject):
         self._tx_packets: deque  = deque(maxlen=1000)
         self._channel_util_log: deque = deque(maxlen=500)
         self._session_started_at = int(time.time())
+
+        # ── RF Scan mode ─────────────────────────────────────────────────
+        # When the user starts a scan, we dedicate the connection to
+        # capturing EVERY received frame (no sampling cap) and pause the
+        # app's background chatter (script scheduler, telemetry polling).
+        # A stock Meshtastic node is not a spectrum analyser — it can only
+        # hear its current band+preset — so the scan is an intensive
+        # passive-listen session, optionally cycling presets for breadth.
+        self._scanning: bool = False
+        self._scan_packets: list = []   # [(ts, from_id, port, snr, rssi, hops, channel)]
+        self._scan_started_at: int = 0
+        self._scan_orig_lora = None      # saved config to restore after preset-cycle
 
         # ── Safety-net timer ─────────────────────────────────────────────
         # If anything causes the auto-reconnect chain to break (OS suspend
@@ -831,6 +848,26 @@ class MeshtasticManager(QObject):
                         float(packet.get("rxSnr") or 0),
                         int(packet.get("rxRssi") or 0),
                     ))
+                # RF scan: capture EVERY frame (incl. our own echoes) with full
+                # metadata so the scan report can characterise all activity.
+                if self._scanning:
+                    try:
+                        hops = None
+                        if packet.get("hopStart") is not None and \
+                           packet.get("hopLimit") is not None:
+                            hops = int(packet["hopStart"]) - int(packet["hopLimit"])
+                        ch_idx = packet.get("channel")
+                        self._scan_packets.append((
+                            int(time.time()),
+                            from_id or "(unknown)",
+                            portnum or "(none)",
+                            float(packet.get("rxSnr") or 0),
+                            int(packet.get("rxRssi") or 0),
+                            hops,
+                            ch_idx,
+                        ))
+                    except Exception:
+                        log.debug("scan capture failed", exc_info=True)
                 # Sample channel_utilization from local telemetry — this is
                 # the device's own measurement of how busy the air is.
                 if (from_id == self.my_node_id
@@ -1552,6 +1589,231 @@ class MeshtasticManager(QObject):
         out.sort(key=lambda d: (-(d["rssi"] or -999), d["name"].lower()))
         return out
 
+    # ===================================================================
+    # RF SCAN MODE
+    # ===================================================================
+    @property
+    def is_scanning(self) -> bool:
+        return self._scanning
+
+    def start_scan(self, pause_callback=None):
+        """Enter RF scan mode: dedicate the link to capturing all activity.
+
+        Pauses the app's background chatter via pause_callback (the UI passes
+        a function that stops the script scheduler + telemetry polling) so
+        the scan is the priority. We do NOT change the device config here —
+        an honest passive listen on the current band+preset. (Preset cycling
+        is a separate, explicit deep-scan action.)
+        """
+        if not self.is_connected:
+            log.warning("start_scan called while not connected")
+            return False
+        if self._scanning:
+            return True
+        log.info("=== RF SCAN START ===")
+        self._scanning = True
+        self._scan_packets = []
+        self._scan_started_at = int(time.time())
+        self._scan_pause_cb = pause_callback
+        if pause_callback:
+            try:
+                pause_callback(True)   # pause background activity
+            except Exception:
+                log.exception("scan pause callback failed")
+        self.scanStateChanged.emit(True)
+        return True
+
+    def stop_scan(self) -> dict:
+        """Exit scan mode, resume background activity, return the report."""
+        if not self._scanning:
+            return {}
+        log.info("=== RF SCAN STOP ===")
+        self._scanning = False
+        if getattr(self, "_scan_pause_cb", None):
+            try:
+                self._scan_pause_cb(False)   # resume background activity
+            except Exception:
+                log.exception("scan resume callback failed")
+        report = self.build_scan_report()
+        self.scanStateChanged.emit(False)
+        self.scanFinished.emit(report)
+        return report
+
+    def emit_scan_progress(self, duration: int):
+        """Called by the UI timer to push a progress update."""
+        if not self._scanning:
+            return
+        elapsed = int(time.time()) - self._scan_started_at
+        self.scanProgress.emit({
+            "elapsed":  elapsed,
+            "duration": duration,
+            "packets":  len(self._scan_packets),
+            "senders":  len({p[1] for p in self._scan_packets}),
+        })
+
+    def build_scan_report(self) -> dict:
+        """Build a comprehensive trust report from the captured scan packets.
+
+        Combines every detection method available to a stock node:
+          • frame count + rate (generic activity level)
+          • unique senders + their signal quality
+          • per-port breakdown (what kinds of traffic)
+          • hop distribution (direct neighbours vs relayed)
+          • SNR/RSSI distribution (how strong / how close)
+          • channels we can decrypt (configured PSKs)
+          • channel utilization from the device's own telemetry
+          • the exact freq/preset we listened on
+        """
+        pkts = list(self._scan_packets)
+        now = int(time.time())
+        duration = max(1, now - self._scan_started_at)
+
+        senders = {}
+        ports = {}
+        hop_hist = {}
+        snrs, rssis = [], []
+        channels_idx = set()
+        for ts, frm, port, snr, rssi, hops, ch in pkts:
+            senders.setdefault(frm, {"count": 0, "snr": [], "rssi": []})
+            senders[frm]["count"] += 1
+            if snr: senders[frm]["snr"].append(snr)
+            if rssi: senders[frm]["rssi"].append(rssi)
+            ports[port] = ports.get(port, 0) + 1
+            if hops is not None:
+                hop_hist[hops] = hop_hist.get(hops, 0) + 1
+            if snr: snrs.append(snr)
+            if rssi: rssis.append(rssi)
+            if ch is not None: channels_idx.add(ch)
+
+        # Channels we can actually decrypt (configured locally)
+        decrypt_channels = []
+        try:
+            for c in (self._iface.localNode.channels or []):
+                if int(getattr(c, "role", 0) or 0) != 0:
+                    decrypt_channels.append(c.settings.name or "(primary)")
+        except Exception:
+            pass
+
+        # Channel utilization from device telemetry (its own air-busy metric)
+        cu_recent = [v for ts, v in self._channel_util_log
+                     if now - ts <= 600]
+        cu_avg = round(sum(cu_recent) / len(cu_recent), 2) if cu_recent else None
+
+        def _rng(v): return (min(v), max(v)) if v else (None, None)
+        snr_lo, snr_hi = _rng(snrs)
+        rssi_lo, rssi_hi = _rng(rssis)
+
+        # Direct neighbours = packets that arrived with 0 hops
+        direct_neighbours = hop_hist.get(0, 0)
+
+        freq = self.get_radio_frequency() if self.is_connected else None
+        total = len(pkts)
+        rate = round(total / duration * 60, 1)  # packets/min
+
+        # Build per-sender summary (top 10 by count)
+        sender_rows = []
+        for frm, d in sorted(senders.items(),
+                             key=lambda x: -x[1]["count"])[:10]:
+            avg_snr = (round(sum(d["snr"]) / len(d["snr"]), 1)
+                       if d["snr"] else None)
+            avg_rssi = (round(sum(d["rssi"]) / len(d["rssi"]))
+                        if d["rssi"] else None)
+            sender_rows.append({
+                "id": frm, "count": d["count"],
+                "avg_snr": avg_snr, "avg_rssi": avg_rssi,
+            })
+
+        return {
+            "duration":            duration,
+            "total_packets":       total,
+            "packets_per_min":     rate,
+            "unique_senders":      len(senders),
+            "direct_neighbours":   direct_neighbours,
+            "by_port":             ports,
+            "hop_histogram":       hop_hist,
+            "snr_range":           (snr_lo, snr_hi),
+            "rssi_range":          (rssi_lo, rssi_hi),
+            "decryptable_channels": decrypt_channels,
+            "channels_seen_idx":   sorted(channels_idx),
+            "channel_util_avg":    cu_avg,
+            "frequency":           freq,
+            "senders":             sender_rows,
+        }
+
+    def get_rf_activity_report(self) -> dict:
+        """Analyse recently received packets to characterise the RF activity
+        around this node — WITHOUT changing any radio settings.
+
+        A Meshtastic radio can only "hear" traffic on the band + preset it's
+        currently configured for, and can only decode packets whose channel
+        PSK it knows. So this report is built from what actually arrived:
+
+          • generic_lora        — are we receiving ANY LoRa frames at all?
+          • meshtastic_compatible — frames that parsed as Meshtastic packets
+          • decodable_no_key    — packets we could read the header of
+          • exact_channel       — channels we actually decrypted (know PSK)
+          • by_port             — breakdown of decoded packet types
+          • unique_senders      — distinct nodes heard
+          • snr / rssi ranges   — signal quality of what we heard
+
+        Returns a dict the Scanner tab renders into plain-language verdicts.
+        """
+        import time as _t
+        now = int(_t.time())
+        window = 600  # last 10 minutes
+
+        total_rx = 0
+        meshtastic_pkts = 0
+        senders = set()
+        ports = {}
+        snrs = []
+        rssis = []
+        channels_seen = set()
+
+        for port, dq in self._rx_packets.items():
+            for entry in dq:
+                ts = entry[0]
+                if now - ts > window:
+                    continue
+                total_rx += 1
+                meshtastic_pkts += 1  # everything we logged is decoded mesh
+                ports[port] = ports.get(port, 0) + 1
+                if len(entry) > 1 and entry[1]:
+                    senders.add(entry[1])
+                if len(entry) > 2 and entry[2] is not None:
+                    snrs.append(entry[2])
+                if len(entry) > 3 and entry[3] is not None:
+                    rssis.append(entry[3])
+
+        # Channels we can decrypt = the ones configured locally
+        try:
+            for ch in (self._iface.localNode.channels or []):
+                if int(getattr(ch, "role", 0) or 0) != 0:
+                    nm = ch.settings.name or "(primary)"
+                    channels_seen.add(nm)
+        except Exception:
+            pass
+
+        freq = self.get_radio_frequency() if self.is_connected else None
+
+        def _rng(vals):
+            return (min(vals), max(vals)) if vals else (None, None)
+        snr_lo, snr_hi = _rng(snrs)
+        rssi_lo, rssi_hi = _rng(rssis)
+
+        return {
+            "window_secs":          window,
+            "total_rx":             total_rx,
+            "meshtastic_pkts":      meshtastic_pkts,
+            "unique_senders":       len(senders),
+            "by_port":              ports,
+            "decryptable_channels": sorted(channels_seen),
+            "snr_range":            (snr_lo, snr_hi),
+            "rssi_range":           (rssi_lo, rssi_hi),
+            "frequency":            freq,
+            "connected":            self.is_connected,
+        }
+
     def get_radio_frequency(self) -> Optional[dict]:
         """Compute the exact LoRa frequency the device is transmitting on.
 
@@ -1607,6 +1869,7 @@ class MeshtasticManager(QObject):
             6:  ("SHORT_FAST",     250.0),
             7:  ("LONG_MODERATE",  125.0),
             8:  ("SHORT_TURBO",    500.0),
+            9:  ("LONG_TURBO",     500.0),
         }
         region_num  = int(getattr(cfg, "region", 0) or 0)
         preset_num  = int(getattr(cfg, "modem_preset", 0) or 0)
