@@ -105,6 +105,10 @@ class MessagesPage(QWidget):
 
         self.convo_list = QListWidget()
         self.convo_list.setSpacing(2)
+        # V0.44: right-click a conversation to delete it
+        self.convo_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.convo_list.customContextMenuRequested.connect(
+            self._show_convo_context_menu)
         ll.addWidget(self.convo_list, 1)
 
         # ============== RIGHT: chat ==============
@@ -130,15 +134,19 @@ class MessagesPage(QWidget):
         title_col.addWidget(self.convo_title)
         title_col.addWidget(self.convo_subtitle)
         title_row.addLayout(title_col, 1)
-        # V0.44: delete-conversation button (works for DM and channel)
-        self.btn_clear_convo = QPushButton("🗑")
-        self.btn_clear_convo.setFixedSize(32, 32)
+        # V0.44: delete-conversation button (works for DM and channel).
+        # Use a text label ("Delete") rather than an emoji-only glyph, which
+        # doesn't render reliably inside a styled QPushButton on Windows.
+        self.btn_clear_convo = QPushButton("🗑  Delete")
+        self.btn_clear_convo.setCursor(Qt.PointingHandCursor)
         self.btn_clear_convo.setToolTip("Delete this conversation's history")
         self.btn_clear_convo.setStyleSheet(
             f"QPushButton {{ background: {Colors.BG_INPUT}; "
+            f"color: {Colors.TEXT_SECONDARY}; "
             f"border: 1px solid {Colors.BORDER}; border-radius: 8px; "
-            f"font-size: 14px; }} "
-            f"QPushButton:hover {{ background: {Colors.DANGER}; }}")
+            f"padding: 6px 12px; font-size: 12px; }} "
+            f"QPushButton:hover {{ background: {Colors.DANGER}; "
+            f"color: white; border-color: {Colors.DANGER}; }}")
         self.btn_clear_convo.clicked.connect(self._delete_current_conversation)
         title_row.addWidget(self.btn_clear_convo)
         ch_l.addLayout(title_row)
@@ -481,13 +489,40 @@ class MessagesPage(QWidget):
     # ====================================================================
     # ACTIUNI in bara DM
     # ====================================================================
+    def _show_convo_context_menu(self, pos):
+        """Right-click on a conversation → Delete option."""
+        item = self.convo_list.itemAt(pos)
+        if item is None:
+            return
+        convo_id = item.data(Qt.UserRole)
+        if not convo_id:
+            return
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        act_del = menu.addAction("🗑  Delete conversation")
+        chosen = menu.exec(self.convo_list.mapToGlobal(pos))
+        if chosen == act_del:
+            self._delete_conversation(convo_id)
+
     def _delete_current_conversation(self):
-        """Delete the currently-open conversation (DM or channel) from history."""
-        if not self.current_convo:
+        """Delete the currently-open conversation (toolbar button)."""
+        if self.current_convo:
+            self._delete_conversation(self.current_convo)
+
+    def _delete_conversation(self, convo_id: str):
+        """Delete a conversation (DM or channel) from history, by id."""
+        if not convo_id:
             return
         from PySide6.QtWidgets import QMessageBox
-        is_dm = self.current_convo.startswith("dm:")
-        title = self.convo_title.text() or "this conversation"
+        is_dm = convo_id.startswith("dm:")
+        # friendly name for the confirm dialog
+        if is_dm:
+            nid = convo_id.split(":", 1)[1]
+            title = self.node_names.get(nid, nid)
+        else:
+            idx = convo_id.split(":", 1)[1]
+            ch = next((c for c in self.channels if str(c["index"]) == idx), None)
+            title = ch["name"] if ch else f"Channel {idx}"
         confirm = QMessageBox.question(
             self, "Delete conversation?",
             f"Delete all messages in \"{title}\"?\n\n"
@@ -500,19 +535,24 @@ class MessagesPage(QWidget):
             from ..message_db import MessageDB
             db = MessageDB.get()
             if is_dm:
-                partner = self.current_convo.split(":", 1)[1]
+                partner = convo_id.split(":", 1)[1]
                 my = self.manager.my_node_id or ""
                 n = db.clear_dm(my, partner)
             else:
-                ch_idx = int(self.current_convo.split(":", 1)[1])
+                ch_idx = int(convo_id.split(":", 1)[1])
                 n = db.clear_channel(ch_idx)
-            # Clear in-memory cache + redraw
-            self.conversations[self.current_convo] = []
-            self._render_current_convo()
+            # Clear in-memory cache
+            self.conversations[convo_id] = []
+            # Refresh the sidebar (count badges) and the chat view
+            self._rebuild_convo_list()
+            if self.current_convo == convo_id:
+                self._render_current_convo()
             self._feedback(f"Deleted {n} message(s)")
-            log.info(f"Cleared conversation {self.current_convo}: {n} messages")
+            log.info(f"Cleared conversation {convo_id}: {n} messages")
         except Exception:
             log.exception("delete conversation failed")
+            QMessageBox.warning(self, "Delete failed",
+                                "Could not delete the conversation. See logs.")
         if self.current_convo and self.current_convo.startswith("dm:"):
             return self.current_convo.split(":", 1)[1]
         return None

@@ -14,7 +14,7 @@
   <img alt="Meshtastic" src="https://img.shields.io/badge/meshtastic-2.3%2B-67ea94"/>
   <img alt="License" src="https://img.shields.io/badge/license-GPL--3.0-blue"/>
   <img alt="Platforms" src="https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey"/>
-  <img alt="Version" src="https://img.shields.io/badge/version-v0.43.0-green"/>
+  <img alt="Version" src="https://img.shields.io/badge/version-v0.44.0-green"/>
 </p>
 
 <p align="center">
