@@ -110,13 +110,26 @@ class _ConnectWorker(QThread):
                         port = int(port_str)
                     except ValueError:
                         host, port = raw, 4403
+                if port != 4403:
+                    log.warning(
+                        f"TCP port {port} is not the Meshtastic default "
+                        f"(4403). If the connection is refused, try 4403.")
                 self.progress.emit(f"Conectez TCP la {host}:{port}…")
                 from meshtastic.tcp_interface import TCPInterface
+                # A more generous handshake timeout helps devices on weak
+                # WiFi finish the Meshtastic protocol handshake (the library
+                # default can be too short → "Timed out waiting for
+                # connection completion"). Fall back gracefully on older
+                # library versions that don't accept these kwargs.
                 try:
-                    iface = TCPInterface(hostname=host, portNumber=port)
+                    iface = TCPInterface(hostname=host, portNumber=port,
+                                         timeout=20)
                 except TypeError:
-                    # versiuni mai vechi nu accepta portNumber
-                    iface = TCPInterface(hostname=host)
+                    try:
+                        iface = TCPInterface(hostname=host, portNumber=port)
+                    except TypeError:
+                        # versiuni mai vechi nu accepta portNumber
+                        iface = TCPInterface(hostname=host)
 
             elif self.conn_type == "ble":
                 from meshtastic.ble_interface import BLEInterface
@@ -179,6 +192,26 @@ class _ConnectWorker(QThread):
         if ("no meshtastic ble peripheral" in sl
                 or "bleinterface.bleerror" in type(e).__name__.lower()):
             return t("err.ble_not_found", s)
+        # Connection refused (WinError 10061) — usually wrong IP or port.
+        # Meshtastic listens on TCP 4403; a refused connection often means
+        # the port is wrong (e.g. 4404) or the device's WiFi/TCP is off.
+        if "10061" in s or "refused" in sl or "connectionrefused" in type(e).__name__.lower():
+            return ("Connection refused. Check the IP address and make sure "
+                    "the port is 4403 (the Meshtastic default). A refused "
+                    "connection usually means nothing is listening on that "
+                    "host/port — verify the device's WiFi/TCP is enabled.")
+        # Socket-level timeout (WinError 10060) — host unreachable / wrong IP
+        if "10060" in s:
+            return ("Connection timed out reaching the device. The IP may be "
+                    "wrong or the device is off the network. Double-check the "
+                    "address and that the device is powered on and on WiFi.")
+        # Protocol handshake timeout — socket connected but device didn't
+        # finish the Meshtastic handshake (common on weak WiFi / busy device).
+        if "waiting for connection completion" in sl:
+            return ("Reached the device but it didn't finish the Meshtastic "
+                    "handshake in time. This is common on a weak WiFi link or "
+                    "a busy device — try again, or move the node closer to "
+                    "the access point.")
         if "timeout" in sl:
             return t("err.conn_timeout", s)
         if "no devices detected" in sl or "no meshtastic device" in sl:

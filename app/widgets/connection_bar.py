@@ -84,9 +84,11 @@ class ConnectionBar(QFrame):
 
         # ---- INPUT STACK ----
         self.stack = QStackedWidget()
-        # V20-turn10: lowered from 340 to 240 so the connection bar
-        # still fits on narrow windows (e.g. 760px wide) without truncation.
-        self.stack.setMinimumWidth(240)
+        # V0.45: keep the input area compact so all buttons (Scan, Connect,
+        # language) stay visible even on narrow windows. The IP/host field
+        # no longer grows unbounded.
+        self.stack.setMinimumWidth(200)
+        self.stack.setMaximumWidth(420)
 
         # Serial: port combo
         serial_w = QWidget()
@@ -119,6 +121,7 @@ class ConnectionBar(QFrame):
         self.lbl_addr = QLabel()
         bl.addWidget(self.lbl_addr)
         self.ble_addr = QLineEdit()
+        self.ble_addr.setMaximumWidth(200)
         bl.addWidget(self.ble_addr, 1)
         # V20-turn9: Scan button — opens a picker that scans BLE devices
         # via bleak and lets the user pick one. meshtastic-python 2.5+
@@ -139,6 +142,8 @@ class ConnectionBar(QFrame):
         wl.addWidget(self.lbl_host)
         self.wifi_host = QLineEdit()
         self.wifi_host.setText("meshtastic.local")
+        # Cap the width — an IP/hostname is short, no need to fill the bar.
+        self.wifi_host.setMaximumWidth(170)
         wl.addWidget(self.wifi_host, 1)
         self.lbl_wport = QLabel()
         wl.addWidget(self.lbl_wport)
@@ -161,7 +166,7 @@ class ConnectionBar(QFrame):
         # ---- CONNECT BUTTON ----
         self.btn_connect = QPushButton()
         self.btn_connect.setObjectName("PrimaryButton")
-        self.btn_connect.setMinimumWidth(130)
+        self.btn_connect.setMinimumWidth(110)
         self.btn_connect.setMinimumHeight(36)
         self.btn_connect.clicked.connect(self._on_connect_clicked)
         root.addWidget(self.btn_connect)

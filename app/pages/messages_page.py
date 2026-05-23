@@ -394,9 +394,10 @@ class MessagesPage(QWidget):
             log.warning(f"Text gol primit, IGNOR: {msg}")
             return
 
-        # V0.44: game protocol messages (Tic-Tac-Toe) are routed to the Games
-        # tab — keep them out of the normal chat view.
-        if text.startswith("MLTTT:"):
+        # V0.45: game protocol messages are routed to the Games tab — keep
+        # them out of the normal chat view. (MLGAME: covers all 5 games;
+        # MLTTT: kept for backward-compat with older clients.)
+        if text.startswith("MLGAME:") or text.startswith("MLTTT:"):
             return
 
         my_id = self.manager.my_node_id or ""

@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.45.0] — 2026-05-23
+
+### Fixed (connection robustness)
+- Friendlier connection errors: "connection refused" now explains to check
+  the IP and use port 4403 (the Meshtastic default — a common cause is using
+  the wrong port like 4404); socket timeouts and protocol-handshake timeouts
+  get distinct, actionable messages.
+- TCP connections now use a more generous 20s handshake timeout so devices on
+  weak WiFi can finish connecting (was timing out with "Timed out waiting for
+  connection completion"). Falls back gracefully on older library versions.
+- Logs a warning when a non-standard TCP port is used.
+
+### Changed (UI)
+- Connection bar made more compact: the IP/host field no longer grows
+  unbounded (capped width), so the Scan, Connect and language buttons stay
+  fully visible even on narrow windows.
+
+### Added
+- **Games: 4 new games + a game picker**. The Games tab now offers five
+  two-player games chosen from a dropdown, all bandwidth-friendly (each move
+  is one tiny DM via the MLGAME: protocol):
+  - **Tic-Tac-Toe** — the classic 3×3.
+  - **Connect 4** — drop discs in a 7×6 grid, four in a row wins.
+  - **Rock-Paper-Scissors** — best of 3 rounds, simultaneous choices.
+  - **Battleship** — place 3 ships on a 5×5 grid, take turns firing.
+  - **Nim (21)** — take 1–3 sticks; whoever takes the last one loses.
+  Each game is a self-contained engine (app/game_engines.py) with full
+  rules, win/draw detection and turn enforcement; all five were verified
+  with real two-player simulations.
+
+### Changed
+- Game wire protocol generalised from MLTTT: to MLGAME:<code>:<payload> so a
+  single tab can host many games. Both prefixes are filtered out of the normal
+  chat view (MLTTT: kept for backward-compat).
+
+
 ## [0.44.0] — 2026-05-22
 
 ### Added
