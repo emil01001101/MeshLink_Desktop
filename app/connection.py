@@ -1395,6 +1395,7 @@ class MeshtasticManager(QObject):
                 uplink_enabled = False
                 downlink_enabled = False
                 position_precision = 0
+                is_muted = False
                 if settings:
                     uplink_enabled = bool(
                         getattr(settings, "uplink_enabled", False))
@@ -1407,6 +1408,11 @@ class MeshtasticManager(QObject):
                                 getattr(mod_settings, "position_precision", 0))
                         except Exception:
                             position_precision = 0
+                        try:
+                            is_muted = bool(
+                                getattr(mod_settings, "is_muted", False))
+                        except Exception:
+                            is_muted = False
                 channels.append({
                     "index": ch.index,
                     "name":  name or (
@@ -1416,6 +1422,7 @@ class MeshtasticManager(QObject):
                     "uplink_enabled":    uplink_enabled,
                     "downlink_enabled":  downlink_enabled,
                     "position_precision": position_precision,
+                    "is_muted":          is_muted,
                 })
             active_names = [c['name'] for c in channels
                             if c['role'] != 'DISABLED']
@@ -1425,17 +1432,20 @@ class MeshtasticManager(QObject):
             log.exception("Error fetching channels")
 
     def add_channel(self, name: str, psk: bytes = b"",
-                    uplink: bool = False, downlink: bool = False) -> bool:
-        """Create a new SECONDARY channel in the first free slot.
+                    uplink: bool = False, downlink: bool = False,
+                    position_precision: int = 0, is_muted: bool = False,
+                    role: int = 2) -> bool:
+        """Create a new channel.
 
         Args:
             name: 1..11 char channel name
-            psk:  encryption key. Empty bytes → use default LongFast key.
-                  Single byte 0x01 → use default (legacy marker).
-                  16 bytes → AES-128; 32 bytes → AES-256; anything else is
-                  rejected by the firmware so we validate here.
+            psk:  encryption key. 0 bytes → no encryption; 1 byte (0x01) →
+                  default LongFast key; 16 bytes → AES-128; 32 bytes → AES-256.
             uplink, downlink: MQTT bridge flags
-        Returns True on success, False otherwise.
+            position_precision: 0 (off) .. 32 (full GPS) location precision
+            is_muted: mute notifications for this channel
+            role: 1 = PRIMARY (writes channel 0), 2 = SECONDARY (first free slot)
+        Returns True on success.
         """
         if not self.is_connected:
             self.errorMessage.emit(t("err.not_connected"))
@@ -1448,33 +1458,42 @@ class MeshtasticManager(QObject):
             return False
         try:
             local = self._iface.localNode
-            # Find first DISABLED slot at index >= 1 (index 0 is PRIMARY).
             target = None
-            for ch in (local.channels or []):
-                role = int(getattr(ch, "role", 0) or 0)
-                if ch.index >= 1 and role == 0:   # DISABLED
-                    target = ch
-                    break
+            if int(role) == 1:
+                # PRIMARY → channel 0
+                for ch in (local.channels or []):
+                    if int(ch.index) == 0:
+                        target = ch
+                        break
+            else:
+                # SECONDARY → first DISABLED slot at index >= 1
+                for ch in (local.channels or []):
+                    r = int(getattr(ch, "role", 0) or 0)
+                    if ch.index >= 1 and r == 0:
+                        target = ch
+                        break
             if target is None:
                 self.errorMessage.emit(t("channels.err_no_slot"))
                 return False
-            # Compose the new ChannelSettings
             target.settings.name = name
             try:
                 target.settings.psk = psk
             except Exception:
-                # psk field expects bytes; some pb wrappers want assignment
-                # via CopyFrom — fallback path.
                 target.settings.ClearField("psk")
                 target.settings.psk = psk
             target.settings.uplink_enabled   = bool(uplink)
             target.settings.downlink_enabled = bool(downlink)
-            # Mark as SECONDARY
-            target.role = 2
-            log.info(f"add_channel: writing slot {target.index} "
-                     f"name={name!r} psk_len={len(psk)}")
+            try:
+                target.settings.module_settings.position_precision = \
+                    int(position_precision)
+                target.settings.module_settings.is_muted = bool(is_muted)
+            except Exception:
+                log.debug("module_settings not supported", exc_info=True)
+            target.role = int(role)
+            log.info(f"add_channel: slot {target.index} name={name!r} "
+                     f"role={role} psk_len={len(psk)} "
+                     f"pos_prec={position_precision} muted={is_muted}")
             local.writeChannel(target.index)
-            # Re-publish so the UI refreshes
             self._publish_channels()
             return True
         except Exception as e:
@@ -1487,7 +1506,8 @@ class MeshtasticManager(QObject):
                        psk: Optional[bytes] = None,
                        uplink: Optional[bool] = None,
                        downlink: Optional[bool] = None,
-                       position_precision: Optional[int] = None) -> bool:
+                       position_precision: Optional[int] = None,
+                       is_muted: Optional[bool] = None) -> bool:
         """Update an existing channel. Only non-None fields are touched.
 
         For the PRIMARY channel (index 0) name/psk changes break compat with
@@ -1529,6 +1549,11 @@ class MeshtasticManager(QObject):
                 try:
                     target.settings.module_settings.position_precision = \
                         int(position_precision)
+                except Exception:
+                    pass
+            if is_muted is not None:
+                try:
+                    target.settings.module_settings.is_muted = bool(is_muted)
                 except Exception:
                     pass
             log.info(f"update_channel: writing slot {index} "

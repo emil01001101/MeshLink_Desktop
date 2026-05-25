@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.46.0] — 2026-05-25
+
+### Added / Improved
+- **Full channel configuration** in the add/edit dialog, in plain language:
+  - **Role**: choose PRIMARY or SECONDARY.
+  - **Encryption**: Default key (AQ==), None (no encryption), Random AES-128,
+    Random AES-256, or Custom (paste base64 or hex, validated to 16/32 bytes).
+  - **Location sharing**: friendly position-precision presets from "Off" to
+    "Precise" (maps to the firmware's 0–32 precision bits).
+  - **MQTT uplink / downlink** toggles and a **Mute channel** option.
+  - A note clarifying that radio settings (region/preset/bandwidth/SF/CR/
+    frequency) are device-wide (Settings → Quick Device Config), and that the
+    primary channel name sets the LoRa frequency slot.
+- The manager's add/update channel methods now carry role, position precision
+  and mute through to the firmware, and channels report their mute state.
+
+### Fixed (connection)
+- TCP connect uses a longer 20s handshake timeout for weak-WiFi devices.
+- Clear, actionable errors for refused connections (wrong port — Meshtastic
+  uses 4403), socket timeouts and protocol-handshake timeouts.
+
+### Changed (UI)
+- Connection bar made compact (capped IP field) and the Scan buttons widened
+  so "🔍 Scan" is never clipped; all buttons stay visible on narrow windows.
+
+
 ## [0.45.0] — 2026-05-23
 
 ### Fixed (connection robustness)

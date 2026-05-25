@@ -501,7 +501,10 @@ class ChannelsPage(QWidget):
             ok = self.manager.add_channel(
                 name=payload["name"], psk=payload["psk"],
                 uplink=payload["uplink_enabled"],
-                downlink=payload["downlink_enabled"])
+                downlink=payload["downlink_enabled"],
+                position_precision=payload.get("position_precision", 0),
+                is_muted=payload.get("is_muted", False),
+                role=payload.get("role", 2))
             log.info(f"add via dialog: name={payload['name']!r} ok={ok}")
             return
         idx = payload["index"]
@@ -519,5 +522,6 @@ class ChannelsPage(QWidget):
             name=payload["name"], psk=psk_to_send,
             uplink=payload["uplink_enabled"],
             downlink=payload["downlink_enabled"],
-            position_precision=payload["position_precision"])
+            position_precision=payload["position_precision"],
+            is_muted=payload.get("is_muted"))
         log.info(f"edit via dialog: idx={idx} ok={ok}")
