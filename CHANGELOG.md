@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.48.0] — 2026-05-26
+
+### Fixed
+- **DM action buttons no longer crash.** Request position, request telemetry,
+  traceroute and "open in Maps" called a missing helper
+  (`_current_dm_partner`), raising AttributeError every time. Added the helper
+  (resolves the current "dm:<node>" conversation to a node ID).
+- **Custom LoRa settings now persist and reload when editing a channel.**
+  The channel dialog now reads the device's current LoRa config and pre-fills
+  the bandwidth / spread factor / coding rate / slot / frequency-override
+  fields, auto-enabling the radio section when the device is on a custom
+  (non-preset) config. Previously these values were lost on re-open. Verified
+  with a full round-trip (e.g. SFNarrow BW62/SF7/CR5/slot4/869.618 MHz).
+- New `read_lora_config()` manager method backing the above.
+
+
+## [0.47.0] — 2026-05-26
+
+### Added
+- **Full LoRa radio configuration in the channel dialog.** When adding or
+  editing a channel you can now optionally tick "📻 Also configure device
+  LoRa radio" to set the exact technical parameters in one place:
+  - **Bandwidth** (31 / 62 / 125 / 250 / 500 kHz)
+  - **Spreading Factor** (7–12)
+  - **Coding Rate** (4/5 – 4/8)
+  - **Frequency slot** (0 = auto)
+  - **Frequency override** (exact MHz, e.g. 869.618)
+  - **Live frequency preview** calculated from bandwidth + slot + region.
+  This makes it possible to set up narrow-band test channels (e.g. SFNarrow:
+  name SFNarrow, PSK AQ==, BW 62, SF 7, CR 5, slot 4, override 869.618 MHz)
+  entirely from the channel dialog. A clear warning notes these are
+  device-wide settings affecting all channels.
+- New `write_lora_config()` manager method (use_preset, bandwidth,
+  spread_factor, coding_rate, channel_num, override_frequency).
+
+
 ## [0.46.0] — 2026-05-25
 
 ### Added / Improved

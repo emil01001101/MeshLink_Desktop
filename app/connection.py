@@ -1568,6 +1568,73 @@ class MeshtasticManager(QObject):
             self.errorMessage.emit(t("channels.err_save", str(e)))
             return False
 
+    def read_lora_config(self) -> Optional[dict]:
+        """Read the current device-wide LoRa config so the channel dialog can
+        pre-fill the custom BW/SF/CR/slot/override fields when editing."""
+        if not self.is_connected:
+            return None
+        try:
+            lc = self._iface.localNode.localConfig
+            lora = lc.lora
+            return {
+                "use_preset":         bool(getattr(lora, "use_preset", True)),
+                "modem_preset":       int(getattr(lora, "modem_preset", 0)),
+                "bandwidth":          int(getattr(lora, "bandwidth", 0)),
+                "spread_factor":      int(getattr(lora, "spread_factor", 0)),
+                "coding_rate":        int(getattr(lora, "coding_rate", 0)),
+                "channel_num":        int(getattr(lora, "channel_num", 0)),
+                "override_frequency": float(getattr(lora, "override_frequency", 0.0)),
+            }
+        except Exception:
+            log.debug("read_lora_config failed", exc_info=True)
+            return None
+
+    def write_lora_config(self, *, bandwidth=None, spread_factor=None,
+                          coding_rate=None, channel_num=None,
+                          override_frequency=None, use_preset=None,
+                          modem_preset=None) -> bool:
+        """Write device-wide LoRa radio parameters.
+
+        Only non-None fields are touched. For a fully custom config (e.g. a
+        narrow-band channel like SFNarrow: BW 62 / SF 7 / CR 5), pass
+        use_preset=False plus bandwidth/spread_factor/coding_rate. The
+        channel_num is the frequency slot; override_frequency (MHz) forces an
+        exact frequency regardless of slot.
+
+        NOTE: LoRa config is device-wide — it affects ALL channels, not just
+        one. The device reboots to apply it.
+        """
+        if not self.is_connected:
+            self.errorMessage.emit(t("err.not_connected"))
+            return False
+        try:
+            local = self._iface.localNode
+            lc = local.localConfig
+            if use_preset is not None:
+                lc.lora.use_preset = bool(use_preset)
+            if modem_preset is not None:
+                lc.lora.modem_preset = int(modem_preset)
+            if bandwidth is not None:
+                lc.lora.bandwidth = int(bandwidth)
+            if spread_factor is not None:
+                lc.lora.spread_factor = int(spread_factor)
+            if coding_rate is not None:
+                lc.lora.coding_rate = int(coding_rate)
+            if channel_num is not None:
+                lc.lora.channel_num = int(channel_num)
+            if override_frequency is not None:
+                # firmware expects MHz as a float
+                lc.lora.override_frequency = float(override_frequency)
+            log.info(f"write_lora_config: bw={bandwidth} sf={spread_factor} "
+                     f"cr={coding_rate} slot={channel_num} "
+                     f"override={override_frequency} use_preset={use_preset}")
+            local.writeConfig("lora")
+            return True
+        except Exception as e:
+            log.exception("write_lora_config failed")
+            self.errorMessage.emit(t("channels.err_save", str(e)))
+            return False
+
     def remove_channel(self, index: int) -> bool:
         """Disable (= remove) a SECONDARY channel.
 

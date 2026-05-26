@@ -562,6 +562,19 @@ class MessagesPage(QWidget):
         self.lbl_action_feedback.setText(text)
         QTimer.singleShot(2500, lambda: self.lbl_action_feedback.setText(""))
 
+    def _current_dm_partner(self) -> Optional[str]:
+        """Return the node ID of the current DM conversation, or None.
+
+        The current conversation key is formatted as "dm:<node_id>" for
+        direct messages and "ch:<index>" for channels. The DM action buttons
+        (request position/telemetry, traceroute, open in maps) only apply to
+        DM conversations.
+        """
+        convo = self.current_convo
+        if convo and convo.startswith("dm:"):
+            return convo[3:]
+        return None
+
     def _dm_request_position(self):
         partner = self._current_dm_partner()
         if partner and self.manager.request_position(partner):

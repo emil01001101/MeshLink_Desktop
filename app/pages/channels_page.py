@@ -467,16 +467,30 @@ class ChannelsPage(QWidget):
     def _add_channel(self):
         if not self.manager.is_connected:
             return
-        dlg = ChannelEditDialog(existing=None, parent=self.window())
+        dlg = ChannelEditDialog(existing=None, parent=self.window(),
+                                region_hint=self._region_hint(),
+                                lora_config=self.manager.read_lora_config())
         dlg.saveRequested.connect(self._on_dialog_save)
         dlg.exec()
 
     def _edit_channel(self, channel: dict):
         if not self.manager.is_connected:
             return
-        dlg = ChannelEditDialog(existing=channel, parent=self.window())
+        dlg = ChannelEditDialog(existing=channel, parent=self.window(),
+                                region_hint=self._region_hint(),
+                                lora_config=self.manager.read_lora_config())
         dlg.saveRequested.connect(self._on_dialog_save)
         dlg.exec()
+
+    def _region_hint(self) -> str:
+        """Best-effort current region name for the frequency preview."""
+        try:
+            freq = self.manager.get_radio_frequency()
+            if freq and freq.get("region"):
+                return freq["region"]
+        except Exception:
+            pass
+        return "EU_868"
 
     def _remove_channel(self, channel: dict):
         idx = channel.get("index")
@@ -497,6 +511,16 @@ class ChannelsPage(QWidget):
             ok = self.manager.remove_channel(int(payload["index"]))
             log.info(f"remove via dialog: idx={payload['index']} ok={ok}")
             return
+        # Optional device-wide LoRa radio config (e.g. SFNarrow: BW62/SF7/CR5)
+        lora = payload.get("lora")
+        if lora:
+            self.manager.write_lora_config(
+                use_preset=lora.get("use_preset", False),
+                bandwidth=lora.get("bandwidth"),
+                spread_factor=lora.get("spread_factor"),
+                coding_rate=lora.get("coding_rate"),
+                channel_num=lora.get("channel_num"),
+                override_frequency=lora.get("override_frequency"))
         if payload.get("is_new"):
             ok = self.manager.add_channel(
                 name=payload["name"], psk=payload["psk"],

@@ -92,10 +92,13 @@ class ChannelEditDialog(QDialog):
     """
     saveRequested = Signal(dict)
 
-    def __init__(self, existing: Optional[dict] = None, parent=None):
+    def __init__(self, existing: Optional[dict] = None, parent=None,
+                 region_hint: str = "EU_868", lora_config: Optional[dict] = None):
         super().__init__(parent)
         self.existing = existing or {}
         self.is_new = (existing is None)
+        self.region_hint = region_hint
+        self.lora_config = lora_config or {}
         self.is_primary = (not self.is_new
                            and existing.get("role") == "PRIMARY")
         self.setMinimumWidth(480)
@@ -192,6 +195,77 @@ class ChannelEditDialog(QDialog):
 
         root.addLayout(form)
 
+        # ── Advanced: device LoRa radio config (collapsible) ──────────────
+        self.cb_lora_enable = QCheckBox(
+            "📻  Also configure device LoRa radio (custom BW / SF / CR / slot)")
+        self.cb_lora_enable.setStyleSheet(
+            f"color:{Colors.TEXT_PRIMARY}; font-weight:600;")
+        self.cb_lora_enable.toggled.connect(self._on_lora_toggle)
+        root.addWidget(self.cb_lora_enable)
+
+        self.lora_box = QFrame()
+        self.lora_box.setObjectName("Card")
+        self.lora_box.setVisible(False)
+        lora_form = QFormLayout(self.lora_box)
+        lora_form.setContentsMargins(14, 12, 14, 12)
+        lora_form.setSpacing(8)
+
+        lora_warn = QLabel(
+            "⚠  These are DEVICE-WIDE radio settings — they affect ALL "
+            "channels, not just this one. Set them to match the exact "
+            "configuration your group uses (e.g. a narrow-band test channel). "
+            "The device reboots to apply.")
+        lora_warn.setWordWrap(True)
+        lora_warn.setStyleSheet(
+            f"color:{Colors.WARNING}; font-size:10px; padding:4px;")
+        lora_form.addRow(lora_warn)
+
+        # Bandwidth
+        self.cmb_bw = QComboBox()
+        for b in ("31", "62", "125", "250", "500"):
+            self.cmb_bw.addItem(f"{b} kHz", int(b))
+        self.cmb_bw.setCurrentIndex(3)  # 250 default
+        self.cmb_bw.currentIndexChanged.connect(self._update_freq_preview)
+        lora_form.addRow("Bandwidth:", self.cmb_bw)
+
+        # Spreading Factor
+        self.sp_sf = QSpinBox()
+        self.sp_sf.setRange(7, 12)
+        self.sp_sf.setValue(7)
+        self.sp_sf.setToolTip("7 = faster/shorter range, 12 = slower/longer range")
+        self.sp_sf.valueChanged.connect(self._update_freq_preview)
+        lora_form.addRow("Spreading Factor:", self.sp_sf)
+
+        # Coding Rate
+        self.sp_cr = QSpinBox()
+        self.sp_cr.setRange(5, 8)
+        self.sp_cr.setValue(5)
+        self.sp_cr.setToolTip("4/5 .. 4/8 — higher = more error correction, slower")
+        lora_form.addRow("Coding Rate (4/x):", self.sp_cr)
+
+        # Frequency slot
+        self.sp_slot = QSpinBox()
+        self.sp_slot.setRange(0, 200)
+        self.sp_slot.setValue(0)
+        self.sp_slot.setToolTip("Channel slot within the region band (0 = auto)")
+        self.sp_slot.valueChanged.connect(self._update_freq_preview)
+        lora_form.addRow("Frequency slot:", self.sp_slot)
+
+        # Frequency override
+        self.ed_freq_override = QLineEdit()
+        self.ed_freq_override.setPlaceholderText("e.g. 869.618 (leave empty for auto)")
+        self.ed_freq_override.setToolTip(
+            "Force an exact frequency in MHz, ignoring the slot calculation.")
+        lora_form.addRow("Frequency override (MHz):", self.ed_freq_override)
+
+        # Live frequency preview
+        self.lbl_freq_preview = QLabel("")
+        self.lbl_freq_preview.setStyleSheet(
+            f"color:{Colors.PRIMARY}; font-size:11px; font-weight:600;")
+        lora_form.addRow("Calculated frequency:", self.lbl_freq_preview)
+
+        root.addWidget(self.lora_box)
+
         # LoRa note
         note = QLabel(
             "ℹ  Radio settings (region, preset, bandwidth, spread factor, "
@@ -223,6 +297,10 @@ class ChannelEditDialog(QDialog):
 
     def _populate_from_existing(self):
         ex = self.existing
+        # Pre-fill LoRa controls from the device's current config (for both
+        # new and existing channels) so custom radio settings are preserved
+        # and editable.
+        self._populate_lora()
         if self.is_new:
             self.cmb_role.setCurrentIndex(0)   # Secondary
             self.cmb_enc.setCurrentIndex(0)    # Default key
@@ -271,6 +349,47 @@ class ChannelEditDialog(QDialog):
                 best_d, best_i = d, i
         self.cmb_pos.setCurrentIndex(best_i)
 
+    def _populate_lora(self):
+        """Pre-fill the custom LoRa controls from the device's current config.
+
+        If the device is on a custom (non-preset) LoRa config, tick the
+        checkbox and load BW/SF/CR/slot/override so the values are preserved
+        and editable. Without this, re-opening a channel would lose the
+        custom radio settings the user entered.
+        """
+        lc = self.lora_config or {}
+        if not lc:
+            return
+        bw   = lc.get("bandwidth") or 0
+        sf   = lc.get("spread_factor") or 0
+        cr   = lc.get("coding_rate") or 0
+        slot = lc.get("channel_num") or 0
+        override = lc.get("override_frequency") or 0.0
+        use_preset = lc.get("use_preset", True)
+
+        # Set bandwidth dropdown to the matching entry (if any)
+        if bw:
+            idx = self.cmb_bw.findData(int(bw))
+            if idx >= 0:
+                self.cmb_bw.setCurrentIndex(idx)
+        if 7 <= sf <= 12:
+            self.sp_sf.setValue(int(sf))
+        if 5 <= cr <= 8:
+            self.sp_cr.setValue(int(cr))
+        if slot:
+            self.sp_slot.setValue(int(slot))
+        if override and override > 0:
+            self.ed_freq_override.setText(f"{override:.3f}".rstrip("0").rstrip("."))
+
+        # Auto-enable the section if the device is using a custom config
+        # (i.e. not a named preset, or any custom value is set).
+        has_custom = (not use_preset) or bool(override) or (
+            bw and self.cmb_bw.findData(int(bw)) >= 0 and not use_preset)
+        if not use_preset or override:
+            self.cb_lora_enable.setChecked(True)
+            self._on_lora_toggle(True)
+        self._update_freq_preview()
+
     # ----------------------------------------------------------- actions --
     def _on_role_changed(self, *_):
         is_primary = (self.cmb_role.currentData() == 1)
@@ -304,6 +423,42 @@ class ChannelEditDialog(QDialog):
         self.ed_psk_display.setEchoMode(
             QLineEdit.Normal if checked else QLineEdit.Password)
         self.btn_show_psk.setText("🙈" if checked else "👁")
+
+    def _on_lora_toggle(self, checked: bool):
+        self.lora_box.setVisible(checked)
+        if checked:
+            self._update_freq_preview()
+
+    def _update_freq_preview(self, *_):
+        """Live-calculate the operating frequency from BW + slot + region.
+
+        EU_868 base: the formula is freq = freqStart + bw/2 + slot*bw.
+        We use the region the device is currently on (passed via region_hint),
+        defaulting to EU_868. The override field, if set, wins.
+        """
+        override = self.ed_freq_override.text().strip()
+        if override:
+            try:
+                f = float(override)
+                self.lbl_freq_preview.setText(f"{f:.3f} MHz (manual override)")
+                return
+            except ValueError:
+                pass
+        bw_khz = self.cmb_bw.currentData() or 250
+        slot = self.sp_slot.value()
+        # Region start frequencies (MHz) — default EU_868
+        region_start = {
+            "EU_868": 869.4, "US": 902.0, "EU_433": 433.0, "ANZ": 915.0,
+            "CN": 470.0, "JP": 920.0, "KR": 920.0, "IN": 865.0,
+        }.get(self.region_hint, 869.4)
+        bw_mhz = bw_khz / 1000.0
+        if slot == 0:
+            self.lbl_freq_preview.setText(
+                f"auto (slot 0) — base {region_start:.3f} MHz, BW {bw_khz} kHz")
+        else:
+            freq = region_start + bw_mhz / 2.0 + (slot - 1) * bw_mhz
+            self.lbl_freq_preview.setText(
+                f"≈ {freq:.3f} MHz  (slot {slot}, BW {bw_khz} kHz)")
 
     def _resolve_psk(self) -> Optional[bytes]:
         mode = self.cmb_enc.currentData()
@@ -357,7 +512,7 @@ class ChannelEditDialog(QDialog):
             if ans != QMessageBox.Yes:
                 return
 
-        self.saveRequested.emit({
+        payload = {
             "is_new":             self.is_new,
             "remove":             False,
             "index":              (None if self.is_new
@@ -369,5 +524,26 @@ class ChannelEditDialog(QDialog):
             "downlink_enabled":   self.cb_downlink.isChecked(),
             "position_precision": int(self.cmb_pos.currentData()),
             "is_muted":           self.cb_muted.isChecked(),
-        })
+        }
+        # Optional device-wide LoRa radio config
+        if self.cb_lora_enable.isChecked():
+            override = self.ed_freq_override.text().strip()
+            override_f = None
+            if override:
+                try:
+                    override_f = float(override)
+                except ValueError:
+                    QMessageBox.warning(self, "Invalid frequency",
+                        "Frequency override must be a number in MHz, "
+                        "e.g. 869.618")
+                    return
+            payload["lora"] = {
+                "use_preset":         False,
+                "bandwidth":          self.cmb_bw.currentData(),
+                "spread_factor":      self.sp_sf.value(),
+                "coding_rate":        self.sp_cr.value(),
+                "channel_num":        self.sp_slot.value(),
+                "override_frequency": override_f,
+            }
+        self.saveRequested.emit(payload)
         self.accept()
