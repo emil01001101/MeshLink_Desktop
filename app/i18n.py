@@ -22,6 +22,16 @@ TRANSLATIONS = {
     # ROMANA
     # =====================================================================
     "ro": {
+        "game.TTT": "X și 0",
+        "game.C4": "Patru în linie",
+        "game.RPS": "Piatră-Hârtie-Foarfece",
+        "game.BS": "Bătălie navală",
+        "game.NIM": "Nim (21)",
+        "game.GN": "Ghicește numărul",
+        "game.DAB": "Puncte și pătrate",
+        "game.HM": "Spânzurătoarea",
+        "game.NMM": "Moara (Nouă oameni)",
+        "game.CK": "Dame",
         # general
         "app.title":          "MeshLink Desktop",
         "app.subtitle":       "Client desktop",
@@ -356,6 +366,16 @@ TRANSLATIONS = {
     # ENGLISH
     # =====================================================================
     "en": {
+        "game.TTT": "Tic-Tac-Toe",
+        "game.C4": "Connect 4",
+        "game.RPS": "Rock-Paper-Scissors",
+        "game.BS": "Battleship",
+        "game.NIM": "Nim (21)",
+        "game.GN": "Guess the Number",
+        "game.DAB": "Dots and Boxes",
+        "game.HM": "Hangman",
+        "game.NMM": "Nine Men's Morris",
+        "game.CK": "Checkers",
         "app.title":          "MeshLink Desktop",
         "app.subtitle":       "Desktop client",
         "common.yes":         "Yes",
@@ -678,6 +698,16 @@ TRANSLATIONS = {
     # ESPANOL
     # =====================================================================
     "es": {
+        "game.TTT": "Tres en raya",
+        "game.C4": "Conecta 4",
+        "game.RPS": "Piedra-Papel-Tijera",
+        "game.BS": "Batalla naval",
+        "game.NIM": "Nim (21)",
+        "game.GN": "Adivina el número",
+        "game.DAB": "Puntos y cajas",
+        "game.HM": "El ahorcado",
+        "game.NMM": "Molino (Nine Men's Morris)",
+        "game.CK": "Damas",
         "app.title":          "MeshLink Desktop",
         "app.subtitle":       "Cliente de escritorio",
         "common.yes":         "Si",

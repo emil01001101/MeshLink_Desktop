@@ -1,18 +1,28 @@
 # MeshLink Desktop - Python dependencies
-# Tested on Python 3.10+
+# Tested on Python 3.10+ (Windows 11, Linux, macOS)
+# ============================================================
+# Install all with:   pip install -r requirements.txt
 # ============================================================
 
-# MANDATORY
-PySide6>=6.6.0
-meshtastic>=2.3.0
-pypubsub>=4.0.3
-pyserial>=3.5
+# ---- MANDATORY (app will not start without these) ----
+PySide6>=6.6.0            # Qt6 GUI framework
+meshtastic>=2.3.0         # Meshtastic device protocol + interfaces (pulls in google-protobuf)
+pypubsub>=4.0.3           # pubsub events used by the meshtastic library
+pyserial>=3.5             # USB / serial port enumeration and connection
 
-# RECOMMENDED
-PyYAML>=6.0
-PySide6-WebEngine>=6.6.0     # for Map tab (Leaflet/OSM)
-pyqtgraph>=0.13.0            # for telemetry chart in Info tab + popup
-numpy>=1.24.0                # required by pyqtgraph
+# ---- RECOMMENDED (enable optional features) ----
+# Note: Qt WebEngine (for the interactive Leaflet/OSM map in the Map tab) ships
+# with PySide6 itself via the PySide6-Addons meta-package, so it does NOT need a
+# separate requirement. If the Map tab reports WebEngine missing, reinstall
+# PySide6 with:  pip install --force-reinstall PySide6
+PyYAML>=6.0               # YAML config import/export
+pyqtgraph>=0.13.0         # live telemetry charts (Info tab + telemetry popup)
+numpy>=1.24.0             # required by pyqtgraph
 
-# OPTIONAL (Bluetooth)
-bleak>=0.21.0
+# ---- OPTIONAL (Bluetooth Low Energy connection) ----
+bleak>=0.21.0             # BLE scanning + connection to Heltec/T-Beam over Bluetooth
+
+# ---- BUILD ONLY (needed only to compile the standalone .exe) ----
+# Not required to run from source. Installed automatically by
+# build_meshlink_exe.bat.
+# pyinstaller>=6.0

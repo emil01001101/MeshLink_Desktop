@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.52.0] — 2026-05-27
+
+### Fixed (build)
+- `requirements.txt` no longer lists the non-existent `PySide6-WebEngine`
+  package (which caused `pip install -r requirements.txt` to fail). Qt
+  WebEngine already ships with PySide6 via PySide6-Addons, so no separate
+  dependency is needed. This unblocks both `run.bat` and
+  `build_meshlink_exe.bat`.
+
+
+### Fixed
+- **Battleship now starts correctly.** The board no longer appears before a
+  game is started — until you press ▶ New game (or accept an invite) the area
+  shows a clear "press New game" placeholder, so the earlier confusing state
+  (a visible board where clicks did nothing) is gone. After starting, tap your
+  own fleet grid to place 3 ships, then Ready.
+
+### Added
+- **Five new two-player games (10 total), each tested with real 2-player
+  simulations and playable end-to-end via the UI:**
+  - **Guess the Number** — one picks 1–100, the other guesses with
+    higher/lower hints.
+  - **Dots and Boxes** — 5×5 dot grid; complete a box to score and play again.
+  - **Hangman** — one sets a secret word, the other guesses letters (6 lives).
+  - **Nine Men's Morris** — place 9 men, form mills to capture, then move.
+  - **Checkers** — 8×8 draughts with forced captures and simple kings.
+- **Game names localized** in English, Spanish and Romanian (the picker shows
+  the name in the app's current language; wire codes stay stable).
+
+### Changed
+- `run.bat` rewritten in professional English (status messages, Python version
+  detection, clearer errors).
+- `requirements.txt` reviewed, grouped and documented; every third-party import
+  verified as covered.
+- Added `build_meshlink_exe.bat` — one-click PyInstaller builder that produces
+  a single-file `dist\MeshLinkDesktop.exe` (no Python needed to run it).
+
+
+
 ## [0.48.0] — 2026-05-26
 
 ### Fixed
